@@ -14,6 +14,8 @@
   "dotenv": "^16.5.0",
   "express": "^5.2.1",
   "express-session": "^1.19.0",
+  "chartjs-node-canvas": "^4.1.6",
+  "mqtt": "^5.5.0",
   "jsmodbus": "^4.0.10",
   "pdfkit": "^0.15.0",
   "sqlite3": "^5.1.7"
