@@ -18,6 +18,7 @@
   "mqtt": "^5.5.0",
   "jsmodbus": "^4.0.10",
   "pdfkit": "^0.15.0",
+  "chartjs-plugin-datalabels": "^2.2.0",
   "sqlite3": "^5.1.7"
 }
 }
