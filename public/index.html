@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>HMI Curado Fibra</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #eee; margin: 0; text-align: center; }
+        .grid { display: grid; grid-template-columns: repeat(2, 280px); gap: 15px; justify-content: center; padding: 30px; }
+        .btn-dev { padding: 25px; cursor: pointer; background: #222; color: #fff; border: 1px solid #444; border-radius: 8px; font-weight: bold; }
+        .btn-dev:hover { border-color: #007bff; background: #2a2a2a; }
+        
+        #login-screen { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:2000; display:flex; justify-content:center; align-items:center; }
+        .modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#1f1f1f; padding:20px; border-radius:10px; border:2px solid #007bff; z-index:1000; width:880px; }
+        .overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:500; }
+        
+        .form-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; flex:2; }
+        .campo { background:#2a2a2a; padding:6px; border-radius:4px; text-align:left; font-size:0.85em; }
+        .val-act { color:#0f0; font-family:monospace; margin-right:8px; background:#000; padding:2px 4px; }
+        input { background:#000; color:#fff; border:1px solid #444; padding:4px; width:65px; }
+
+        .sidebar { flex:1; background:#111; padding:15px; border-radius:8px; display:flex; flex-direction:column; }
+        button.accion { width:100%; padding:12px; margin-top:10px; cursor:pointer; font-weight:bold; border:none; border-radius:4px; }
+        .btn-green { background:#28a745; color:white; }
+        .btn-red { background:#dc3545; color:white; }
+        .btn-blue { background:#0056b3; color:white; }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+    <div style="background: #1f1f1f; padding: 30px; border-radius: 10px; border: 2px solid #333; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 320px;">
+        <h2 style="color: #007bff; margin-bottom: 20px; font-family: sans-serif; font-size: 22px;">HMI CURADO FIBRA</h2>
+        
+        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 20px;">
+            <input type="text" id="u" placeholder="Usuario" style="padding: 10px; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px; width: 80%; text-align: center; font-size: 15px;">
+            <input type="password" id="p" placeholder="Contraseña" style="padding: 10px; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px; width: 80%; text-align: center; font-size: 15px;">
+            <button onclick="login()" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; width: 87%; margin-top: 5px; font-size: 15px;">
+                Ingresar al Sistema
+            </button>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+
+        <h4 style="color: #888; margin-bottom: 15px; font-family: sans-serif; font-weight: normal; font-size: 12px; letter-spacing: 1px;">ACCESOS RÁPIDOS</h4>
+        <div style="display: flex; flex-direction: column; gap: 10px; align-items: center;">
+            <button type="button" onclick="window.location.href='/horometros'" style="padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; width: 87%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px;">
+                ⏱️ Ver Horómetros
+            </button>
+            <button type="button" onclick="window.location.href='/visor.html'" style="padding: 10px; background: #17a2b8; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; width: 87%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px;">
+                📋 Visor de Ensayos
+            </button>
+        </div>
+    </div>
+</div>
+
+    <h1>CONTROL DE CURADO - FIBRA</h1>
+    <div class="grid" id="container"></div>
+
+    <div class="overlay" onclick="cerrar()"></div>
+    <div class="modal" id="modal">
+        <h2 id="m-tit" style="color:#007bff; margin-top:0;"></h2>
+        <select id="sel-rec" style="width:100%; padding:10px; background:#333; color:white;" onchange="cargarR(this.value)">
+            <option value="">-- Cargar Receta Guardada --</option>
+        </select>
+        <button class="accion btn-blue" onclick="copiar()">⬇ COPIAR VALORES ACTUALES DEL PLC A EDICIÓN</button>
+        
+        <div style="display:flex; gap:15px; margin-top:15px;">
+            <div class="form-grid" id="f-grid"></div>
+            <div class="sidebar">
+                <div style="text-align:left; font-size:0.9em; margin-bottom:15px;">
+                    T.Total: <b id="total" style="color:#ffc107; float:right;">0 min</b>
+                </div>
+                <div style="text-align:left; font-size:0.9em; margin-bottom:15px;">
+                    T.Curado: <b id="total2" style="color:#ffc107; float:right;">0 min</b>
+                </div>
+                <div style="text-align:left; font-size:0.9em; margin-bottom:15px;">
+                    T.Enfriamiento: <b id="total3" style="color:#ffc107; float:right;">0 min</b>
+                </div>
+                <button class="accion btn-green" onclick="setear()">SETEAR ESTE CANAL</button>
+                <button class="accion btn-red" onclick="setearTodo()">⚠️ SETEAR EN TODAS (LAS 6)</button>
+                <hr style="width:100%; border:0; border-top:1px solid #070202; margin:15px 0;">
+                <input type="text" id="nom-r" placeholder="Nombre receta..." style="width:90%;">
+                <button class="accion" onclick="guardarR()" style="background:#17a2b8; color:white;">GUARDAR RECETA</button>
+                <button class="accion" onclick="eliminarR()" style="background:#dc3545; color:white;">🗑 ELIMINAR RECETA</button>
+                <button class="accion" onclick="cerrar()" style="background:#444; color:white; margin-top:15px;">CERRAR</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const campos = [
+            {id:'t1', n:'T1: T. Barrido de Condensado'}, {id:'t2', n:'T2: Inyecc. de Curado'}, {id:'t3', n:'T3: Despre. de Inyeccion'},
+            {id:'t4', n:'T4: Baja Presion Curado'}, {id:'t5', n:'T5: Media Presion Curado'}, {id:'t6', n:'T6: Alta Precion Curado'},
+            {id:'t7', n:'T7: Despres.'}, {id:'t8', n:'T8: Barr. Vap.'}, {id:'t9', n:'T9: Enfri. Ag.'},
+            {id:'t10', n:'T10: Barr. Ag.'}, {id:'t11', n:'T11: Iny. Desm.'}, {id:'t12', n:'T12: Enfriam.'},
+            {id:'t13', n:'T13: Barr. Enf.'}, {id:'ti', n:'TI: Retardo de Apertura'}, {id:'tp', n:'TP: Apertura de Purga'},
+            {id:'td', n:'TD: Ciclo P.'}, {id:'pot_macho', n:'% Pot. M'}, {id:'pot_hembra', n:'% Pot. H'}, {id:'te', n:'TE: Extrac.'}
+        ];
+
+        let devA, canA, recetas = [];
+
+        for(let d=1; d<=6; d++) {
+            for(let c=1; c<=2; c++) {
+                document.getElementById('container').innerHTML += `<button class="btn-dev" onclick="abrir(${d},${c})">DEV ${d} | CANAL ${c}</button>`;
+            }
+        }
+
+        campos.forEach(c => {
+           document.getElementById('f-grid').innerHTML += `<div class="campo"><label style="color:#007bff; display:block;">${c.n}</label>
+    <span class="val-act" id="act-${c.id}">--</span><input type="number" id="inp-${c.id}" oninput="calc(); calc2();calc3();"></div>`;
+        });
+
+        async function login() {
+            const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user:document.getElementById('u').value, pass:document.getElementById('p').value}) });
+            if(res.ok) document.getElementById('login-screen').style.display='none';
+        }
+
+        async function abrir(d, c) {
+            devA = d; canA = c;
+            document.getElementById('m-tit').innerText = `DEV ${d} - CANAL ${c}`;
+            document.getElementById('modal').style.display = 'block';
+            document.querySelector('.overlay').style.display = 'block';
+            refrescar();
+            const r = await fetch('/api/recetas'); recetas = await r.json();
+            const sel = document.getElementById('sel-rec');
+            sel.innerHTML = '<option value="">-- Cargar Receta --</option>';
+            recetas.forEach(x => sel.innerHTML += `<option value="${x.id}">${x.nombre}</option>`);
+        }
+
+        async function refrescar() {
+            const res = await fetch(`/api/leer-plc?dev=${devA}&canal=${canA}`);
+            if(res.ok) {
+                const d = await res.json();
+                campos.forEach(c => document.getElementById(`act-${c.id}`).innerText = d[c.id]);
+            }
+        }
+
+        function copiar() {
+            campos.forEach(c => { const v = document.getElementById(`act-${c.id}`).innerText; if(v !== "--") document.getElementById(`inp-${c.id}`).value = v; });
+            calc();
+            calc2();
+            calc3();
+        }
+
+        function calc() {
+            let total = 0;
+            campos.forEach(c => { if(['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10','t11','t12','t13'].includes(c.id)) total += parseFloat(document.getElementById(`inp-${c.id}`).value) || 0; });
+            document.getElementById('total').innerText = ((total/60).toFixed(1)) + " min";
+        }
+        function calc2() {
+            let total2 = 0;
+            campos.forEach(c => { if(['t2','t3','t4','t5','t6','t7','t8','t9','t10'].includes(c.id)) total2 += parseFloat(document.getElementById(`inp-${c.id}`).value) || 0; });
+            document.getElementById('total2').innerText = ((total2/60).toFixed(1)) + " min";
+        }
+        function calc3() {
+            let total3 = 0;
+            campos.forEach(c => { if(['t11','t12','t13'].includes(c.id)) total3 += parseFloat(document.getElementById(`inp-${c.id}`).value) || 0; });
+            document.getElementById('total3').innerText = ((total3/60).toFixed(1)) + " min";
+        }
+
+        async function setear() {
+            const valores = {};
+            campos.forEach(c => { const v = document.getElementById(`inp-${c.id}`).value; if(v !== "") valores[c.id] = v; });
+            await fetch('/api/setear-plc', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dev:devA, canal:canA, valores}) });
+            alert("Enviado."); setTimeout(refrescar, 600);
+        }
+
+        async function setearTodo() {
+    if(!confirm("¿Estás seguro de enviar esta receta a las 6 máquinas (se aplicará en el CANAL 1 y CANAL 2 de todas)?")) return;
+    
+    const valores = {};
+    campos.forEach(c => { 
+        const v = document.getElementById(`inp-${c.id}`).value; 
+        if(v !== "") valores[c.id] = v; 
+    });
+    
+    // Enviamos solo los valores de la receta
+    const res = await fetch('/api/setear-todas', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ valores }) 
+    });
+    
+    if (res.ok) {
+        alert("Receta grabada con éxito en todos los canales (1 y 2) de las 6 máquinas.");
+        setTimeout(refrescar, 600);
+    } else {
+        alert("Hubo un error en el servidor al intentar procesar el envío masivo total.");
+    }
+}
+
+        function cargarR(id) {
+            const r = recetas.find(x => String(x.id) === String(id));
+            if(r) { campos.forEach(c => document.getElementById(`inp-${c.id}`).value = r.valores[c.id]); calc();calc2();calc3(); }
+        }
+
+        async function guardarR() {
+
+    const valores = {};
+
+    campos.forEach(c => {
+
+        valores[c.id] =
+            document.getElementById(`inp-${c.id}`).value;
+    });
+
+    const nombre =
+        document.getElementById('nom-r').value;
+
+    if (!nombre) {
+
+        alert('Ingresá un nombre');
+
+        return;
+    }
+
+    const res = await fetch('/api/recetas', {
+
+        method: 'POST',
+
+        headers: {
+            'Content-Type': 'application/json'
+        },
+
+        body: JSON.stringify({
+            nombre,
+            valores
+        })
+    });
+
+    if (!res.ok) {
+
+        alert('Error guardando receta');
+
+        return;
+    }
+
+    alert('Receta guardada');
+
+    // =========================================
+    // RECARGAR RECETAS AUTOMÁTICAMENTE
+    // =========================================
+
+    const r = await fetch('/api/recetas');
+
+    recetas = await r.json();
+
+    const sel =
+        document.getElementById('sel-rec');
+
+    sel.innerHTML =
+        '<option value="">-- Cargar Receta --</option>';
+
+    recetas.forEach(x => {
+
+        sel.innerHTML +=
+            `<option value="${x.id}">
+                ${x.nombre}
+             </option>`;
+    });
+
+    // limpiar nombre
+    document.getElementById('nom-r').value = '';
+}
+        async function eliminarR() {
+
+    const id =
+        document.getElementById('sel-rec').value;
+
+    if (!id) {
+
+        alert('Seleccioná una receta');
+
+        return;
+    }
+
+    if (!confirm('¿Eliminar receta?')) {
+        return;
+    }
+
+    const res = await fetch(
+        `/api/recetas/${id}`,
+        {
+            method: 'DELETE'
+        }
+    );
+
+    if (res.ok) {
+
+        alert('Receta eliminada');
+
+        abrir(devA, canA);
+
+    } else {
+
+        alert('Error eliminando receta');
+    }
+}
+
+        function cerrar() { document.getElementById('modal').style.display='none'; document.querySelector('.overlay').style.display='none'; }
+    </script>
+</body>
+</html>

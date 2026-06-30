@@ -1,0 +1,241 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Control de Horómetros</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: #eee; margin: 0; padding: 20px; }
+        h1 { text-align: center; color: #007bff; }
+        .container { display: flex; flex-direction: column; gap: 20px; max-width: 1100px; margin: 0 auto; }
+        .filtros { background: #1f1f1f; padding: 20px; border-radius: 8px; border: 1px solid #333; display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; align-items: flex-start; }
+        .grupo-filtro { display: flex; flex-direction: column; gap: 5px; }
+        .lista-checkboxes { background: #2a2a2a; border: 1px solid #444; padding: 10px; border-radius: 5px; max-height: 120px; overflow-y: auto; width: 220px; }
+        .lista-checkboxes label { display: block; padding: 2px 0; cursor: pointer; }
+        input[type="date"], select, button { padding: 8px; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px; }
+        button { background: #007bff; font-weight: bold; cursor: pointer; border: none; padding: 10px 20px; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        .contenedor-grafico { background: #1f1f1f; padding: 20px; border-radius: 8px; border: 1px solid #333; height: 500px; }
+    </style>
+</head>
+<body>
+
+    <h1>Análisis de Horas Trabajadas por Máquina</h1>
+
+    <div class="container">
+        <div class="filtros">
+            <div class="grupo-filtro">
+                <label style="font-weight: bold;">1. Seleccionar Máquina(s):</label>
+                <div id="contenedor-maquinas" class="lista-checkboxes">
+                    <span style="color:#888; font-size:12px;">Cargando máquinas...</span>
+                </div>
+            </div>
+
+            <div class="grupo-filtro">
+                <label style="font-weight: bold;">2. Rango de Fechas:</label>
+                <div style="display:flex; gap:10px;">
+                    <input type="date" id="fecha-desde">
+                    <input type="date" id="fecha-hasta">
+                </div>
+            </div>
+
+            <div class="grupo-filtro">
+                <label style="font-weight: bold;">3. Escala de Tiempo:</label>
+                <select id="escala-tiempo">
+                    <option value="dia">Por Día</option>
+                    <option value="semana">Por Semana</option>
+                </select>
+            </div>
+
+            <div class="grupo-filtro" style="align-self: center;">
+                <button onclick="generarGrafico()">Generar Gráfico</button>
+            </div>
+        </div>
+
+        <div class="contenedor-grafico">
+            <canvas id="graficoHorometros"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let miGrafico = null;
+
+        // Al cargar la página, inicializamos las fechas por defecto (últimos 15 días) y cargamos las máquinas
+        window.addEventListener('DOMContentLoaded', () => {
+            const hasta = new Date();
+            const desde = new Date();
+            desde.setDate(hasta.getDate() - 15);
+
+            document.getElementById('fecha-hasta').value = hasta.toISOString().split('T')[0];
+            document.getElementById('fecha-desde').value = desde.toISOString().split('T')[0];
+
+            cargarMaquinas();
+        });
+
+        async function cargarMaquinas() {
+            try {
+                const res = await fetch('/api/horometros/maquinas');
+                const maquinas = await res.json();
+                const contenedor = document.getElementById('contenedor-maquinas');
+                contenedor.innerHTML = '';
+
+                if(maquinas.length === 0) {
+                    contenedor.innerHTML = '<span style="color:#888;font-size:12px;">No hay datos guardados aún</span>';
+                    return;
+                }
+
+                maquinas.forEach(m => {
+                    contenedor.innerHTML += `
+                        <label>
+                            <input type="checkbox" name="maquinas" value="${m}" checked> ${m}
+                        </label>
+                    `;
+                });
+            } catch (err) {
+                console.error("Error al cargar la lista de máquinas:", err);
+            }
+        }
+
+        async function generarGrafico() {
+            // 1. Capturar máquinas seleccionadas
+            const checkboxes = document.querySelectorAll('input[name="maquinas"]:checked');
+            const maquinasSeleccionadas = Array.from(checkboxes).map(cb => cb.value);
+
+            const desde = document.getElementById('fecha-desde').value;
+            const hasta = document.getElementById('fecha-hasta').value;
+            const escala = document.getElementById('escala-tiempo').value;
+
+            if (maquinasSeleccionadas.length === 0) {
+                alert("Por favor, selecciona al menos una máquina.");
+                return;
+            }
+
+            try {
+                // 2. Consultar datos a la API
+                const url = `/api/horometros/datos?maquinas=${maquinasSeleccionadas.join(',')}&desde=${desde}&hasta=${hasta}`;
+                const res = await fetch(url);
+                const datosCrudos = await res.json();
+
+                // 3. Procesar y agrupar los datos según la escala seleccionada (Día o Semana)
+                const datosProcesados = procesarDatos(datosCrudos, escala);
+
+                // 4. Dibujar en Chart.js
+                renderizarChartJS(datosProcesados, escala);
+
+            } catch (err) {
+                console.error("Error generando gráfico:", err);
+            }
+        }
+
+        function procesarDatos(rows, escala) {
+    let agrupado = {};
+    let etiquetasX = [];
+
+    // 1. Agrupamos los datos estrictamente por Fecha (Día) para mantener compatibilidad con los filtros
+    rows.forEach(r => {
+        const fechaObj = new Date(r.fecha);
+        let label = "";
+
+        if (escala === 'dia') {
+            // Agrupa por el día del mes (Ej: "Día 16")
+            label = `Día ${fechaObj.getDate()}`;
+        } else {
+            // Para escalas más grandes (Semana/Mes) muestra Día/Mes
+            label = `${fechaObj.getDate()}/${fechaObj.getMonth() + 1}`;
+        }
+
+        if (!etiquetasX.includes(label)) {
+            etiquetasX.push(label);
+        }
+
+        if (!agrupado[r.maquina]) agrupado[r.maquina] = {};
+        if (!agrupado[r.maquina][label]) agrupado[r.maquina][label] = [];
+        
+        agrupado[r.maquina][label].push(r.horas);
+    });
+
+    // 2. Armamos los conjuntos de datos (Datasets) para las barras del gráfico
+    let datasets = [];
+    const colores = ['#007bff', '#28a745', '#ffc107', '#dc3545', '#17a2b8', '#6610f2', '#fd7e14'];
+    let colorIndex = 0;
+
+    for (const maquina in agrupado) {
+        let dataMaquina = [];
+
+        etiquetasX.forEach(label => {
+            const lecturas = agrupado[maquina][label] || [];
+            
+            if (lecturas.length >= 2) {
+                // Buscamos el valor más alto y el más bajo registrado en ese día
+                const max = Math.max(...lecturas);
+                const min = Math.min(...lecturas);
+                const diferencia = max - min;
+                
+                // Si la diferencia da 0 porque el horómetro no se movió todavía, 
+                // pero ya hay registros, mostramos 0 (no trabajó). 
+                // Si ya aumentó (ej: de 15806 a 15809), mostrará las 3 horas reales de diferencia.
+                dataMaquina.push(parseFloat(diferencia.toFixed(2)));
+            } else if (lecturas.length === 1) {
+                // Si es la primera lectura del sistema y no hay contra qué restar,
+                // ponemos 0 temporalmente hasta que llegue la segunda lectura a los 30 min.
+                dataMaquina.push(0);
+            } else {
+                dataMaquina.push(0);
+            }
+        });
+
+        datasets.push({
+            label: maquina,
+            data: dataMaquina,
+            backgroundColor: colores[colorIndex % colores.length] + 'cc', // Barras sólidas pero estéticas
+            borderColor: colores[colorIndex % colores.length],
+            borderWidth: 1
+        });
+        colorIndex++;
+    }
+
+    return { labels: etiquetasX, datasets };
+}
+
+        function renderizarChartJS(datos, escala) {
+            const ctx = document.getElementById('graficoHorometros').getContext('2d');
+
+            // Si ya existía un gráfico previo, lo destruimos para que no se superponga
+            if (miGrafico) {
+                miGrafico.destroy();
+            }
+
+            miGrafico = new Chart(ctx, {
+                type: 'bar', // Podés cambiarlo a 'line' si preferís gráficos de líneas continuas
+                data: {
+                    labels: datos.labels,
+                    datasets: datos.datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            grid: { color: '#333' },
+                            ticks: { color: '#eee' },
+                            title: { display: true, text: escala === 'dia' ? 'Días seleccionados' : 'Semanas del Mes', color: '#007bff', font: { weight: 'bold' } }
+                        },
+                        y: {
+                            grid: { color: '#333' },
+                            ticks: { color: '#eee' },
+                            title: { display: true, text: 'Horas Trabajadas (h)', color: '#007bff', font: { weight: 'bold' } },
+                            beginAtZero: true
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#eee' }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

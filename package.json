@@ -1,0 +1,20 @@
+{
+  "name": "dev-sacada",
+  "version": "2.0.0",
+  "description": "SCADA industrial de curado fibra",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+ "dependencies": {
+  "dotenv": "^16.5.0",
+  "express": "^5.2.1",
+  "express-session": "^1.19.0",
+  "jsmodbus": "^4.0.10",
+  "sqlite3": "^5.1.7"
+}
+}

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+<meta charset="UTF-8">
+<title>Visor de Ensayos</title>
+
+<style>
+
+body{
+    font-family:Arial;
+    background:#111;
+    color:white;
+    padding:20px;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    margin-top:20px;
+}
+
+th,td{
+    border:1px solid #333;
+    padding:10px;
+}
+
+th{
+    background:#222;
+}
+
+input{
+    padding:8px;
+    margin-right:10px;
+    background:#222;
+    color:white;
+    border:1px solid #444;
+}
+
+button{
+    padding:8px 15px;
+    cursor:pointer;
+}
+
+a{
+    color:#00bfff;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>Visor de Ensayos</h1>
+
+<div>
+
+    <input id="filtroOP" placeholder="OP">
+
+    <input id="filtroCano" placeholder="Caño">
+
+    <input id="filtroFecha" type="date">
+
+    <button onclick="buscar()">
+        Buscar
+    </button>
+
+</div>
+
+<table>
+
+<thead>
+<tr>
+    <th>Fecha</th>
+    <th>OP</th>
+    <th>Caño</th>
+    <th>PDF</th>
+</tr>
+</thead>
+
+<tbody id="tabla">
+
+</tbody>
+
+</table>
+
+<script>
+
+let ensayos = [];
+
+async function cargarEnsayos(){
+
+    const res =
+        await fetch('/api/ensayos');
+
+    ensayos =
+        await res.json();
+
+    mostrar(ensayos);
+}
+
+function mostrar(lista){
+
+    const tabla =
+        document.getElementById('tabla');
+
+    tabla.innerHTML = '';
+
+    lista.forEach(e=>{
+
+        tabla.innerHTML += `
+        <tr>
+            <td>${e.fecha}</td>
+            <td>${e.op}</td>
+            <td>${e.cano}</td>
+            <td>
+                <a href="/pdfs/${e.archivo}"
+                   target="_blank">
+                    Abrir PDF
+                </a>
+            </td>
+        </tr>
+        `;
+    });
+}
+
+function buscar(){
+
+    const op =
+        document.getElementById('filtroOP')
+        .value
+        .trim();
+
+    const cano =
+        document.getElementById('filtroCano')
+        .value
+        .trim();
+
+    const fecha =
+        document.getElementById('filtroFecha')
+        .value;
+
+    const filtrado =
+        ensayos.filter(e=>{
+
+            let ok = true;
+
+            if(op){
+                ok =
+                    ok &&
+                    String(e.op)
+                    .includes(op);
+            }
+
+            if(cano){
+                ok =
+                    ok &&
+                    String(e.cano)
+                    .includes(cano);
+            }
+
+            if(fecha){
+                ok =
+                    ok &&
+                    e.fecha.startsWith(fecha);
+            }
+
+            return ok;
+        });
+
+    mostrar(filtrado);
+}
+
+cargarEnsayos();
+
+</script>
+
+</body>
+</html>
