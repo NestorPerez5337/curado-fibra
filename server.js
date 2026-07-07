@@ -689,10 +689,12 @@ const rutaArchivo =
 
                 align: 'top',
 
-                offset: 4,
+                offset: 8, // Subimos un poquito el offset para que al estar vertical no toque el punto
+
+                rotation: -90, // 👈 ¡ESTA ES LA LÍNEA MÁGICA! Pone los números verticales
 
                 font: {
-                    size: 10,
+                    size: 8, // Achicamos un pelín el texto para que entre impecable
                     weight: 'bold'
                 },
 
