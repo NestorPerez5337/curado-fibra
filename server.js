@@ -648,7 +648,7 @@ const rutaArchivo =
 
         const labels =
             datosEnsayo.map((_, i) =>
-                (i * 0.5).toFixed(1)
+                (i ).toFixed(1)
             );
 
        const configuration = {
