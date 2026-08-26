@@ -40,12 +40,18 @@ process.on('unhandledRejection', err => {
 // SESIONES
 // ======================================================
 
+// La sesión dura como máximo 2 horas desde que se inicia sesión
+// (no se renueva con la actividad: pasadas las 2hs hay que volver a
+// loguearse aunque se haya estado usando el sistema todo ese tiempo).
+const SESION_DURACION_MS = 2 * 60 * 60 * 1000;
+
 app.use(session({
     secret: process.env.SESSION_SECRET || 'curado_fibra_secret_2026',
     resave: false,
     saveUninitialized: false,
+    rolling: false,
     cookie: {
-        maxAge: 3600000,
+        maxAge: SESION_DURACION_MS,
         secure: false,
         httpOnly: true,
         sameSite: 'lax'
@@ -517,6 +523,28 @@ const requiereAdmin = (req, res, next) => {
         res.status(403).json({ error: 'Solo administrador' });
     });
 };
+
+// Variantes para rutas de PÁGINA (no de API): si no hay sesión válida
+// o falta el permiso, en vez de devolver un JSON de error mandan
+// directo al login. Es lo que corresponde cuando alguien navega o
+// recarga una URL protegida con la sesión ya vencida (las rutas de
+// API siguen devolviendo JSON, que es lo que necesita el fetch()
+// del navegador para saber que tiene que redirigir).
+function paginaProtegida(chequeoApi) {
+
+    return (req, res, next) => {
+
+        const resFalso = {
+            status: () => resFalso,
+            json: () => res.redirect('/')
+        };
+
+        chequeoApi(req, resFalso, next);
+    };
+}
+
+const requierePermisoPagina = (permiso) => paginaProtegida(requierePermiso(permiso));
+const requiereAdminPagina = paginaProtegida(requiereAdmin);
 
 // ======================================================
 // LOGIN
@@ -2302,7 +2330,7 @@ app.get('/api/horometros/datos', requierePermiso('horometros'), (req, res) => {
 });
 
 // 3. Ruta para que Express sirva la nueva interfaz gráfica
-app.get('/horometros', requierePermiso('horometros'), (req, res) => {
+app.get('/horometros', requierePermisoPagina('horometros'), (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'horometros.html'));
 });
 
@@ -2310,23 +2338,23 @@ app.get('/horometros', requierePermiso('horometros'), (req, res) => {
 // PÁGINAS PROTEGIDAS: VISOR Y ADMINISTRADOR
 // ======================================================
 
-app.get('/visor', requierePermiso('visor'), (req, res) => {
+app.get('/visor', requierePermisoPagina('visor'), (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'visor.html'));
 });
 
-app.get('/admin', requiereAdmin, (req, res) => {
+app.get('/admin', requiereAdminPagina, (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'admin.html'));
 });
 
-app.get('/log', requiereAdmin, (req, res) => {
+app.get('/log', requiereAdminPagina, (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'log.html'));
 });
 
-app.get('/compresores', requierePermiso('compresores'), (req, res) => {
+app.get('/compresores', requierePermisoPagina('compresores'), (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'compresores.html'));
 });
 
-app.get('/compresores/historial', requierePermiso('compresores'), (req, res) => {
+app.get('/compresores/historial', requierePermisoPagina('compresores'), (req, res) => {
     res.sendFile(path.join(__dirname, 'protegido', 'compresores-historial.html'));
 });
 

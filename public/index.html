@@ -132,6 +132,24 @@
 
         let yo = null;
 
+        // Si la sesión venció mientras se estaba usando el panel de
+        // devanadoras, volvemos al login. Excluimos /api/login (su propio
+        // 401 es "contraseña incorrecta", no sesión vencida) y /api/me
+        // (initSesion ya maneja su 401 mostrando el login normalmente;
+        // si no la excluyéramos, un visitante sin sesión entraría en un
+        // bucle de recargas).
+        (function () {
+            const fetchOriginal = window.fetch;
+            window.fetch = async function (...args) {
+                const res = await fetchOriginal(...args);
+                const url = String(args[0]);
+                if (res.status === 401 && url !== '/api/login' && url !== '/api/me') {
+                    window.location.href = '/';
+                }
+                return res;
+            };
+        })();
+
         async function login() {
             const msg = document.getElementById('msg-login');
             msg.innerText = '';
