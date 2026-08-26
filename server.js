@@ -122,6 +122,12 @@ if (!fs.existsSync('./data')) {
 if (!fs.existsSync('./pdfs')) {
     fs.mkdirSync('./pdfs');
 }
+if (!fs.existsSync('./backups')) {
+    fs.mkdirSync('./backups');
+}
+if (!fs.existsSync('./backups/pdfs')) {
+    fs.mkdirSync('./backups/pdfs');
+}
 const db = new sqlite3.Database('./data/recetas.db');
 
 db.serialize(() => {
@@ -293,6 +299,98 @@ db.serialize(() => {
     `);
 
 });
+
+// ======================================================
+// BACKUPS AUTOMÁTICOS
+// ======================================================
+// Guardan una copia de la base y de los PDFs en un volumen aparte
+// (backups_curado_fibra) para que, aunque algo le pase a los volumes
+// principales en una actualización, haya de dónde recuperar los datos.
+// Se generan solos cada 6 horas y también se pueden disparar a mano
+// (y descargar) desde la pantalla de Administración.
+
+const BACKUPS_A_CONSERVAR = 28; // ~7 días si corre cada 6hs
+
+function timestampBackup() {
+
+    const d = new Date();
+
+    return (
+        d.getFullYear() +
+        String(d.getMonth() + 1).padStart(2, '0') +
+        String(d.getDate()).padStart(2, '0') +
+        '_' +
+        String(d.getHours()).padStart(2, '0') +
+        String(d.getMinutes()).padStart(2, '0') +
+        String(d.getSeconds()).padStart(2, '0')
+    );
+}
+
+function hacerBackup() {
+
+    return new Promise((resolve, reject) => {
+
+        const nombreDb = `recetas_${timestampBackup()}.db`;
+        const rutaDb = path.join(__dirname, 'backups', nombreDb);
+
+        // VACUUM INTO genera una copia consistente de la base aunque
+        // esté siendo usada en simultáneo, a diferencia de copiar el
+        // archivo .db directamente.
+        db.run(`VACUUM INTO ?`, [rutaDb], err => {
+
+            if (err) {
+                console.error('Error haciendo backup de la base:', err);
+                return reject(err);
+            }
+
+            // Copiamos al backup los PDFs que todavía no estén ahí
+            // (los PDFs no cambian una vez generados, así que no hace
+            // falta volver a copiar los que ya están).
+            try {
+
+                const origen = path.join(__dirname, 'pdfs');
+                const destino = path.join(__dirname, 'backups', 'pdfs');
+
+                const archivos = fs.readdirSync(origen);
+                let copiados = 0;
+
+                archivos.forEach(nombre => {
+
+                    const rutaDestino = path.join(destino, nombre);
+
+                    if (!fs.existsSync(rutaDestino)) {
+                        fs.copyFileSync(path.join(origen, nombre), rutaDestino);
+                        copiados++;
+                    }
+                });
+
+                // Rotación: nos quedamos solo con los últimos N backups de la base
+                const backupsDb = fs.readdirSync(path.join(__dirname, 'backups'))
+                    .filter(n => n.startsWith('recetas_') && n.endsWith('.db'))
+                    .sort();
+
+                while (backupsDb.length > BACKUPS_A_CONSERVAR) {
+                    const viejo = backupsDb.shift();
+                    fs.unlinkSync(path.join(__dirname, 'backups', viejo));
+                }
+
+                console.log(`Backup generado: ${nombreDb} (${copiados} PDF nuevos copiados)`);
+
+                resolve({ nombreDb, pdfsCopiados: copiados });
+
+            } catch (err2) {
+
+                console.error('Error copiando PDFs al backup:', err2);
+                reject(err2);
+            }
+        });
+    });
+}
+
+// Primer backup a los 30s de arrancar (para no competir con el arranque),
+// y después cada 6 horas.
+setTimeout(() => hacerBackup().catch(() => {}), 30 * 1000);
+setInterval(() => hacerBackup().catch(() => {}), 6 * 60 * 60 * 1000);
 
 // ======================================================
 // AUTH
@@ -720,6 +818,68 @@ app.get('/api/log', requiereAdmin, (req, res) => {
             fechaHora: f.fecha_hora
         })));
     });
+});
+
+// ======================================================
+// BACKUPS (solo admin)
+// ======================================================
+
+app.get('/api/backups', requiereAdmin, (req, res) => {
+
+    const carpeta = path.join(__dirname, 'backups');
+
+    fs.readdir(carpeta, (err, archivos) => {
+
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error');
+        }
+
+        const backups = archivos
+            .filter(a => a.startsWith('recetas_') && a.endsWith('.db'))
+            .map(a => {
+
+                const stats = fs.statSync(path.join(carpeta, a));
+
+                return {
+                    archivo: a,
+                    tamanioKb: Math.round(stats.size / 1024),
+                    fecha: stats.mtime.toISOString().slice(0, 19).replace('T', ' ')
+                };
+            })
+            .sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+        res.json(backups);
+    });
+});
+
+app.post('/api/backups', requiereAdmin, async (req, res) => {
+
+    try {
+
+        const resultado = await hacerBackup();
+
+        registrarLog(req, 'sistema', 'Generó un backup manual de la base de datos');
+
+        res.json({ status: 'ok', archivo: resultado.nombreDb });
+
+    } catch (err) {
+
+        console.error(err);
+        res.status(500).send('Error generando el backup');
+    }
+});
+
+app.get('/api/backups/:archivo', requiereAdmin, (req, res) => {
+
+    const archivo = path.basename(req.params.archivo);
+    const ruta = path.join(__dirname, 'backups', archivo);
+
+    if (!fs.existsSync(ruta)) {
+        return res.status(404).send('No existe');
+    }
+
+    res.download(ruta);
 });
 
 // ======================================================

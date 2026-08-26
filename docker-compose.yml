@@ -15,6 +15,7 @@ services:
     volumes:
       - datos_curado_fibra:/app/data
       - pdfs_curado_fibra:/app/pdfs
+      - backups_curado_fibra:/app/backups
 
     environment:
       TZ: America/Argentina/Buenos_Aires
@@ -26,3 +27,4 @@ services:
 volumes:
   datos_curado_fibra:
   pdfs_curado_fibra:
+  backups_curado_fibra:

@@ -72,6 +72,28 @@
     <div id="msg-tabla" class="msg"></div>
 </div>
 
+<div class="panel">
+    <h2>Backups</h2>
+    <p style="font-size:13px; color:#aaa; margin-top:0;">
+        Se genera un backup automático de la base de datos y los PDFs cada 6 horas, en un lugar
+        separado de los datos principales. Se conservan los últimos 28. Para máxima seguridad,
+        descargá uno de vez en cuando y guardalo fuera del servidor.
+    </p>
+    <button class="btn-crear" onclick="crearBackup()">Generar backup ahora</button>
+    <div id="msg-backup" class="msg"></div>
+    <table>
+        <thead>
+            <tr>
+                <th>Archivo</th>
+                <th>Fecha</th>
+                <th>Tamaño</th>
+                <th>Acción</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-backups"></tbody>
+    </table>
+</div>
+
 <script>
 
 let yoUsuarioId = null;
@@ -235,9 +257,56 @@ async function eliminarUsuario(id, usuario) {
     cargarUsuarios();
 }
 
+async function cargarBackups() {
+
+    const res = await fetch('/api/backups');
+    if (!res.ok) return;
+
+    const backups = await res.json();
+    const tbody = document.getElementById('tabla-backups');
+    tbody.innerHTML = '';
+
+    if (backups.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">Todavía no hay backups generados.</td></tr>';
+        return;
+    }
+
+    backups.forEach(b => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${b.archivo}</td>
+                <td>${b.fecha}</td>
+                <td>${b.tamanioKb} KB</td>
+                <td><a href="/api/backups/${b.archivo}" style="color:#00bfff;">Descargar</a></td>
+            </tr>
+        `;
+    });
+}
+
+async function crearBackup() {
+
+    const msg = document.getElementById('msg-backup');
+    msg.className = 'msg';
+    msg.innerText = 'Generando backup...';
+
+    const res = await fetch('/api/backups', { method: 'POST' });
+
+    if (!res.ok) {
+        msg.className = 'msg error';
+        msg.innerText = 'Error generando el backup.';
+        return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerText = 'Backup generado.';
+
+    cargarBackups();
+}
+
 (async function init() {
     await cargarYo();
     await cargarUsuarios();
+    await cargarBackups();
 })();
 
 </script>
