@@ -159,6 +159,24 @@
             document.getElementById('menu-screen').style.display = 'flex';
         }
 
+        // Si ya había una sesión iniciada (por ejemplo, volviendo con el
+        // botón "atrás" del navegador desde otra pantalla), vamos directo
+        // al menú en vez de mostrar el login de nuevo.
+        (async function initSesion() {
+
+            try {
+
+                const res = await fetch('/api/me');
+
+                if (res.ok) {
+                    yo = await res.json();
+                    document.getElementById('login-screen').style.display = 'none';
+                    mostrarMenu();
+                }
+
+            } catch (e) {}
+        })();
+
         function abrirDevanadoras() {
             document.getElementById('menu-screen').style.display = 'none';
             document.getElementById('panel-devanadoras').style.display = 'block';
