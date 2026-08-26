@@ -13,8 +13,8 @@ services:
       - "3010:3000"
 
     volumes:
-      - ./data:/app/data
-        ./home/industrial/scada/pdfs:/app/pdfs
+      - datos_curado_fibra:/app/data
+      - pdfs_curado_fibra:/app/pdfs
 
     environment:
       TZ: America/Argentina/Buenos_Aires
@@ -22,3 +22,7 @@ services:
       ADMIN_PASS: 1234
       SESSION_SECRET: clave_super_secreta_2026
       PORT: 3000
+
+volumes:
+  datos_curado_fibra:
+  pdfs_curado_fibra:

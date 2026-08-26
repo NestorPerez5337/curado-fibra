@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Administración de Usuarios</title>
+<style>
+    body { font-family: Arial, sans-serif; background:#121212; color:#eee; margin:0; padding:20px; }
+    a.volver { display:inline-block; margin-bottom:10px; color:#007bff; text-decoration:none; font-weight:bold; }
+    h1 { color:#007bff; }
+    h2 { color:#007bff; font-size:16px; margin-top:30px; }
+    .panel { background:#1f1f1f; border:1px solid #333; border-radius:8px; padding:20px; max-width:960px; margin:0 auto 20px; }
+    label { display:block; margin-bottom:4px; color:#aaa; font-size:13px; }
+    input[type=text], input[type=password] { padding:8px; background:#2a2a2a; color:white; border:1px solid #444; border-radius:4px; width:220px; }
+    .fila-form { display:flex; gap:15px; flex-wrap:wrap; align-items:flex-end; }
+    .chk { display:flex; align-items:center; gap:6px; color:#ddd; font-size:14px; }
+    button { padding:8px 15px; cursor:pointer; border:none; border-radius:4px; font-weight:bold; }
+    .btn-crear { background:#28a745; color:white; }
+    .btn-guardar { background:#007bff; color:white; }
+    .btn-eliminar { background:#dc3545; color:white; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th, td { border:1px solid #333; padding:8px; text-align:left; font-size:14px; }
+    th { background:#222; }
+    .msg { margin-top:10px; font-size:13px; }
+    .msg.error { color:#dc3545; }
+    .msg.ok { color:#28a745; }
+    input[type=text].mini { width:130px; }
+</style>
+</head>
+<body>
+
+<a class="volver" href="/">&larr; Volver al menú</a>
+<h1>Administración de Usuarios</h1>
+
+<div class="panel">
+    <h2>Crear nuevo usuario</h2>
+    <div class="fila-form">
+        <div>
+            <label>Usuario</label>
+            <input type="text" id="nu-usuario">
+        </div>
+        <div>
+            <label>Contraseña</label>
+            <input type="password" id="nu-pass">
+        </div>
+        <label class="chk"><input type="checkbox" id="nu-admin"> Administrador</label>
+        <label class="chk"><input type="checkbox" id="nu-devanadoras"> Devanadoras</label>
+        <label class="chk"><input type="checkbox" id="nu-horometros"> Horómetros</label>
+        <label class="chk"><input type="checkbox" id="nu-visor"> Visor de Ensayos</label>
+        <label class="chk"><input type="checkbox" id="nu-compresores"> Compresores</label>
+        <button class="btn-crear" onclick="crearUsuario()">Crear usuario</button>
+    </div>
+    <div id="msg-crear" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Usuarios existentes</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Usuario</th>
+                <th>Admin</th>
+                <th>Devanadoras</th>
+                <th>Horómetros</th>
+                <th>Visor</th>
+                <th>Compresores</th>
+                <th>Nueva contraseña</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-usuarios"></tbody>
+    </table>
+    <div id="msg-tabla" class="msg"></div>
+</div>
+
+<script>
+
+let yoUsuarioId = null;
+
+async function cargarYo() {
+    const res = await fetch('/api/me');
+    if (res.ok) {
+        const yo = await res.json();
+        yoUsuarioId = yo.id;
+    }
+}
+
+async function cargarUsuarios() {
+
+    const res = await fetch('/api/usuarios');
+
+    if (!res.ok) {
+        document.getElementById('msg-tabla').className = 'msg error';
+        document.getElementById('msg-tabla').innerText = 'No se pudo cargar la lista de usuarios.';
+        return;
+    }
+
+    const usuarios = await res.json();
+    const tbody = document.getElementById('tabla-usuarios');
+    tbody.innerHTML = '';
+
+    usuarios.forEach(u => {
+
+        const tr = document.createElement('tr');
+
+        tr.innerHTML = `
+            <td>${u.usuario}${u.id === yoUsuarioId ? ' (vos)' : ''}</td>
+            <td><input type="checkbox" data-campo="esAdmin" ${u.esAdmin ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-campo="devanadoras" ${u.permisos.devanadoras ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-campo="horometros" ${u.permisos.horometros ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-campo="visor" ${u.permisos.visor ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-campo="compresores" ${u.permisos.compresores ? 'checked' : ''}></td>
+            <td><input type="text" class="mini" placeholder="(sin cambios)" data-campo="pass"></td>
+            <td>
+                <button class="btn-guardar" onclick="guardarUsuario(${u.id}, this)">Guardar</button>
+                <button class="btn-eliminar" onclick="eliminarUsuario(${u.id}, '${u.usuario}')">Eliminar</button>
+            </td>
+        `;
+
+        tbody.appendChild(tr);
+    });
+}
+
+async function crearUsuario() {
+
+    const usuario = document.getElementById('nu-usuario').value.trim();
+    const pass = document.getElementById('nu-pass').value;
+    const msg = document.getElementById('msg-crear');
+
+    if (!usuario || !pass) {
+        msg.className = 'msg error';
+        msg.innerText = 'Usuario y contraseña son obligatorios.';
+        return;
+    }
+
+    const body = {
+        usuario,
+        pass,
+        esAdmin: document.getElementById('nu-admin').checked,
+        permisos: {
+            devanadoras: document.getElementById('nu-devanadoras').checked,
+            horometros: document.getElementById('nu-horometros').checked,
+            visor: document.getElementById('nu-visor').checked,
+            compresores: document.getElementById('nu-compresores').checked
+        }
+    };
+
+    const res = await fetch('/api/usuarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+        const texto = await res.text();
+        msg.className = 'msg error';
+        msg.innerText = texto || 'Error creando el usuario.';
+        return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerText = 'Usuario creado.';
+
+    document.getElementById('nu-usuario').value = '';
+    document.getElementById('nu-pass').value = '';
+    document.getElementById('nu-admin').checked = false;
+    document.getElementById('nu-devanadoras').checked = false;
+    document.getElementById('nu-horometros').checked = false;
+    document.getElementById('nu-visor').checked = false;
+    document.getElementById('nu-compresores').checked = false;
+
+    cargarUsuarios();
+}
+
+async function guardarUsuario(id, boton) {
+
+    const tr = boton.closest('tr');
+
+    const leer = campo => tr.querySelector(`[data-campo="${campo}"]`).checked;
+
+    const body = {
+        esAdmin: leer('esAdmin'),
+        permisos: {
+            devanadoras: leer('devanadoras'),
+            horometros: leer('horometros'),
+            visor: leer('visor'),
+            compresores: leer('compresores')
+        }
+    };
+
+    const pass = tr.querySelector('[data-campo="pass"]').value;
+    if (pass) {
+        body.pass = pass;
+    }
+
+    const res = await fetch(`/api/usuarios/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+
+    const msg = document.getElementById('msg-tabla');
+
+    if (!res.ok) {
+        const texto = await res.text();
+        msg.className = 'msg error';
+        msg.innerText = texto || 'Error guardando los cambios.';
+        return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerText = `Cambios guardados para "${tr.children[0].innerText}".`;
+
+    cargarUsuarios();
+}
+
+async function eliminarUsuario(id, usuario) {
+
+    if (!confirm(`¿Eliminar el usuario "${usuario}"? Esta acción no se puede deshacer.`)) {
+        return;
+    }
+
+    const res = await fetch(`/api/usuarios/${id}`, { method: 'DELETE' });
+    const msg = document.getElementById('msg-tabla');
+
+    if (!res.ok) {
+        const texto = await res.text();
+        msg.className = 'msg error';
+        msg.innerText = texto || 'Error eliminando el usuario.';
+        return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerText = `Usuario "${usuario}" eliminado.`;
+
+    cargarUsuarios();
+}
+
+(async function init() {
+    await cargarYo();
+    await cargarUsuarios();
+})();
+
+</script>
+</body>
+</html>

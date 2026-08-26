@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Historial de Compresores</title>
+<style>
+    body { font-family: Arial, sans-serif; background:#111; color:white; padding:20px; }
+    a.volver { color:#00bfff; text-decoration:none; font-weight:bold; display:inline-block; margin-bottom:10px; }
+    h1 { margin-top:0; }
+    .filtros { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:15px; }
+    label { display:block; font-size:12px; color:#aaa; margin-bottom:4px; }
+    select, input[type=date] { padding:8px; background:#222; color:white; border:1px solid #444; }
+    button { padding:8px 15px; cursor:pointer; background:#007bff; color:white; border:none; border-radius:4px; font-weight:bold; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; }
+    th, td { border:1px solid #333; padding:10px; text-align:left; font-size:14px; }
+    th { background:#222; }
+    .tipo-encendido { color:#28a745; font-weight:bold; }
+    .tipo-apagado { color:#dc3545; font-weight:bold; }
+    .origen { color:#888; font-size:12px; }
+</style>
+</head>
+<body>
+
+<a class="volver" href="/compresores">&larr; Volver a Programación de Compresores</a>
+<h1>Historial de Encendido / Apagado de Compresores</h1>
+
+<div class="filtros">
+    <div>
+        <label>Compresor</label>
+        <select id="filtroCompresor">
+            <option value="">Todos</option>
+        </select>
+    </div>
+    <div>
+        <label>Desde</label>
+        <input type="date" id="filtroDesde">
+    </div>
+    <div>
+        <label>Hasta</label>
+        <input type="date" id="filtroHasta">
+    </div>
+    <button onclick="buscar()">Buscar</button>
+</div>
+
+<table>
+<thead>
+<tr>
+    <th>Fecha y hora</th>
+    <th>Compresor</th>
+    <th>Evento</th>
+    <th>Origen</th>
+</tr>
+</thead>
+<tbody id="tabla"></tbody>
+</table>
+
+<script>
+
+async function cargarCompresores() {
+    const res = await fetch('/api/compresores');
+    if (!res.ok) return;
+    const compresores = await res.json();
+
+    const sel = document.getElementById('filtroCompresor');
+    compresores.forEach(c => {
+        sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
+    });
+}
+
+function origenLegible(origen) {
+    if (origen === 'programado') return 'Automático (horario programado)';
+    if (origen === 'manual') return 'Marcado manualmente';
+    if (origen === 'plc') return 'Detectado en el PLC';
+    return origen;
+}
+
+async function buscar() {
+    const compresorId = document.getElementById('filtroCompresor').value;
+    const desde = document.getElementById('filtroDesde').value;
+    const hasta = document.getElementById('filtroHasta').value;
+
+    const params = new URLSearchParams();
+    if (compresorId) params.set('compresorId', compresorId);
+    if (desde) params.set('desde', desde);
+    if (hasta) params.set('hasta', hasta);
+
+    const res = await fetch('/api/compresores/eventos?' + params.toString());
+    const eventos = res.ok ? await res.json() : [];
+
+    const tbody = document.getElementById('tabla');
+    tbody.innerHTML = '';
+
+    if (eventos.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">Sin eventos registrados todavía.</td></tr>';
+        return;
+    }
+
+    eventos.forEach(e => {
+        tbody.innerHTML += `
+        <tr>
+            <td>${e.fechaHora}</td>
+            <td>${e.compresor}</td>
+            <td class="${e.tipo === 'encendido' ? 'tipo-encendido' : 'tipo-apagado'}">${e.tipo === 'encendido' ? '▶ Encendido' : '⏹ Apagado'}</td>
+            <td class="origen">${origenLegible(e.origen)}</td>
+        </tr>
+        `;
+    });
+}
+
+(async function init() {
+    await cargarCompresores();
+    buscar();
+})();
+
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ const path = require('path');
 const Modbus = require('jsmodbus');
 const net = require('net');
 const sqlite3 = require('sqlite3').verbose();
+const crypto = require('crypto');
 
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
@@ -20,12 +21,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(
-    '/pdfs',
-    express.static(
-        path.join(__dirname, 'pdfs')
-    )
-);
 
 app.set('trust proxy', 1);
 
@@ -150,27 +145,279 @@ db.serialize(() => {
         )
     `);
 
+    db.run(`
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT UNIQUE NOT NULL,
+            salt TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            es_admin INTEGER NOT NULL DEFAULT 0,
+            perm_devanadoras INTEGER NOT NULL DEFAULT 0,
+            perm_horometros INTEGER NOT NULL DEFAULT 0,
+            perm_visor INTEGER NOT NULL DEFAULT 0,
+            perm_compresores INTEGER NOT NULL DEFAULT 0,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Migración: si la tabla usuarios ya existía de una versión anterior
+    // (sin la columna perm_compresores), la agregamos ahora.
+    db.all(`PRAGMA table_info(usuarios)`, [], (err, columnas) => {
+
+        if (err) {
+            console.error('Error leyendo esquema de usuarios:', err);
+            return;
+        }
+
+        const tieneColumna =
+            columnas.some(c => c.name === 'perm_compresores');
+
+        if (!tieneColumna) {
+
+            db.run(
+                `ALTER TABLE usuarios ADD COLUMN perm_compresores INTEGER NOT NULL DEFAULT 0`,
+                err2 => {
+
+                    if (err2) {
+                        console.error('Error migrando columna perm_compresores:', err2);
+                        return;
+                    }
+
+                    console.log('Columna perm_compresores agregada a usuarios.');
+
+                    // Los administradores ya existentes quedan con el permiso
+                    // marcado (igual tienen acceso total por ser admin, esto
+                    // es solo para que se vea consistente en la pantalla).
+                    db.run(`UPDATE usuarios SET perm_compresores = 1 WHERE es_admin = 1`);
+                }
+            );
+        }
+    });
+
+    // Si todavía no existe ningún administrador, creamos uno inicial
+    // con las credenciales de .env (o admin/1234 por defecto).
+    db.get(
+        `SELECT COUNT(*) AS total FROM usuarios WHERE es_admin = 1`,
+        [],
+        (err, row) => {
+
+            if (err) {
+                console.error('Error verificando administrador:', err);
+                return;
+            }
+
+            if (row.total > 0) {
+                return;
+            }
+
+            const usuarioAdmin = process.env.ADMIN_USER || 'admin';
+            const passAdmin = process.env.ADMIN_PASS || '1234';
+            const { salt, hash } = hashearPassword(passAdmin);
+
+            db.run(
+                `INSERT INTO usuarios
+                    (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores)
+                 VALUES (?, ?, ?, 1, 1, 1, 1, 1)`,
+                [usuarioAdmin, salt, hash],
+                err2 => {
+
+                    if (err2) {
+                        console.error('Error creando administrador inicial:', err2);
+                        return;
+                    }
+
+                    console.log(`Usuario administrador inicial creado: ${usuarioAdmin}`);
+                }
+            );
+        }
+    );
+
+    // ======================================================
+    // TABLAS: PROGRAMACIÓN DE COMPRESORES
+    // ======================================================
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS compresores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            ip TEXT,
+            puerto INTEGER DEFAULT 502,
+            marca TEXT,
+            hora_apagado TEXT,
+            activo INTEGER NOT NULL DEFAULT 1,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS compresores_config (
+            clave TEXT PRIMARY KEY,
+            valor TEXT
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS compresores_excepciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compresor_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            hora_apagado TEXT,
+            UNIQUE(compresor_id, fecha)
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS compresores_eventos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compresor_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            origen TEXT NOT NULL,
+            fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // ======================================================
+    // TABLA: LOG DE CAMBIOS (auditoría)
+    // ======================================================
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS log_cambios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
+            usuario TEXT NOT NULL,
+            modulo TEXT NOT NULL,
+            accion TEXT NOT NULL,
+            detalle TEXT,
+            fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
 });
 
 // ======================================================
 // AUTH
 // ======================================================
 
-const asegurarAuth = (req, res, next) => {
+function hashearPassword(password) {
 
-    if (req.session.autenticado) {
-        return next();
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+
+    return { salt, hash };
+}
+
+function verificarPassword(password, salt, hash) {
+
+    try {
+
+        const hashIntentado =
+            crypto.scryptSync(password, salt, 64).toString('hex');
+
+        return crypto.timingSafeEqual(
+            Buffer.from(hash, 'hex'),
+            Buffer.from(hashIntentado, 'hex')
+        );
+
+    } catch {
+
+        return false;
+    }
+}
+
+// Registra en el log de auditoría una acción que CAMBIÓ algo (crear,
+// editar, eliminar, setear un PLC, etc). Las acciones de solo lectura
+// (ver un gráfico, listar algo) nunca deben llamar a esto.
+function registrarLog(req, modulo, accion, detalle) {
+
+    const usuario = req.usuario ? req.usuario.usuario : 'desconocido';
+    const usuarioId = req.usuario ? req.usuario.id : null;
+
+    db.run(
+        `INSERT INTO log_cambios (usuario_id, usuario, modulo, accion, detalle)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+            usuarioId,
+            usuario,
+            modulo,
+            accion,
+            detalle ? JSON.stringify(detalle) : null
+        ],
+        err => {
+
+            if (err) {
+                console.error('Error registrando log de cambios:', err);
+            }
+        }
+    );
+}
+
+function usuarioDesdeFila(fila) {
+
+    return {
+        id: fila.id,
+        usuario: fila.usuario,
+        esAdmin: !!fila.es_admin,
+        permisos: {
+            devanadoras: !!fila.perm_devanadoras,
+            horometros: !!fila.perm_horometros,
+            visor: !!fila.perm_visor,
+            compresores: !!fila.perm_compresores
+        }
+    };
+}
+
+// Buscamos el usuario en la base en cada request (en vez de confiar en un
+// snapshot guardado en la sesión) para que si un admin le quita permisos
+// a alguien, el cambio se aplique de inmediato aunque esa persona ya
+// tenga una sesión abierta.
+const requiereLogin = (req, res, next) => {
+
+    if (!req.session.usuarioId) {
+        return res.status(401).json({ error: 'No autenticado' });
     }
 
-    res.status(401).send("No auth");
+    db.get(
+        `SELECT * FROM usuarios WHERE id = ?`,
+        [req.session.usuarioId],
+        (err, fila) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            if (!fila) {
+                return res.status(401).json({ error: 'No autenticado' });
+            }
+
+            req.usuario = usuarioDesdeFila(fila);
+            next();
+        }
+    );
 };
-const asegurarVisor = (req, res, next) => {
 
-    if (req.session.autenticadoVisor) {
-        return next();
-    }
+const requierePermiso = (permiso) => (req, res, next) => {
 
-    res.status(401).send("No auth");
+    requiereLogin(req, res, () => {
+
+        if (req.usuario.esAdmin || req.usuario.permisos[permiso]) {
+            return next();
+        }
+
+        res.status(403).json({ error: 'Sin permiso para esta sección' });
+    });
+};
+
+const requiereAdmin = (req, res, next) => {
+
+    requiereLogin(req, res, () => {
+
+        if (req.usuario.esAdmin) {
+            return next();
+        }
+
+        res.status(403).json({ error: 'Solo administrador' });
+    });
 };
 
 // ======================================================
@@ -179,36 +426,761 @@ const asegurarVisor = (req, res, next) => {
 
 app.post('/api/login', (req, res) => {
 
-    if (
-        req.body.user === (process.env.ADMIN_USER || 'admin') &&
-        req.body.pass === (process.env.ADMIN_PASS || '1234')
-    ) {
+    const { user, pass } = req.body;
 
-        req.session.autenticado = true;
+    db.get(
+        `SELECT * FROM usuarios WHERE usuario = ?`,
+        [user],
+        (err, fila) => {
 
-        return res.json({
-            status: 'ok'
-        });
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            if (!fila || !verificarPassword(pass || '', fila.salt, fila.hash)) {
+                return res.status(401).send('Error');
+            }
+
+            req.session.usuarioId = fila.id;
+
+            res.json({ status: 'ok' });
+        }
+    );
+});
+
+app.post('/api/logout', (req, res) => {
+
+    req.session.destroy(() => {
+        res.json({ status: 'ok' });
+    });
+});
+
+app.get('/api/me', requiereLogin, (req, res) => {
+
+    res.json(req.usuario);
+});
+
+// ======================================================
+// ADMINISTRACIÓN DE USUARIOS (solo admin)
+// ======================================================
+
+app.get('/api/usuarios', requiereAdmin, (req, res) => {
+
+    db.all(
+        `SELECT id, usuario, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores, fecha
+         FROM usuarios ORDER BY usuario ASC`,
+        [],
+        (err, filas) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            res.json(filas.map(f => ({
+                id: f.id,
+                usuario: f.usuario,
+                esAdmin: !!f.es_admin,
+                permisos: {
+                    devanadoras: !!f.perm_devanadoras,
+                    horometros: !!f.perm_horometros,
+                    visor: !!f.perm_visor,
+                    compresores: !!f.perm_compresores
+                },
+                fecha: f.fecha
+            })));
+        }
+    );
+});
+
+app.post('/api/usuarios', requiereAdmin, (req, res) => {
+
+    const { usuario, pass, esAdmin, permisos } = req.body;
+
+    if (!usuario || !pass) {
+        return res.status(400).send('Usuario y contraseña son obligatorios');
     }
 
-    res.status(401).send("Error");
+    const { salt, hash } = hashearPassword(pass);
+
+    db.run(
+        `INSERT INTO usuarios
+            (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            usuario,
+            salt,
+            hash,
+            esAdmin ? 1 : 0,
+            permisos && permisos.devanadoras ? 1 : 0,
+            permisos && permisos.horometros ? 1 : 0,
+            permisos && permisos.visor ? 1 : 0,
+            permisos && permisos.compresores ? 1 : 0
+        ],
+        function (err) {
+
+            if (err) {
+
+                if (String(err.message).includes('UNIQUE')) {
+                    return res.status(409).send('Ese usuario ya existe');
+                }
+
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            registrarLog(req, 'usuarios', `Creó el usuario "${usuario}"`, {
+                esAdmin: !!esAdmin,
+                permisos
+            });
+
+            res.json({ status: 'ok', id: this.lastID });
+        }
+    );
 });
-app.post('/api/login-visor', (req, res) => {
 
-    if (
-        req.body.user === (process.env.VIEW_USER || 'visor') &&
-        req.body.pass === (process.env.VIEW_PASS || '1234')
-    ) {
+app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
 
-        req.session.autenticadoVisor = true;
+    const { pass, esAdmin, permisos } = req.body;
+    const id = req.params.id;
 
-        return res.json({
-            status: 'ok'
-        });
+    const aplicarCampos = (nombreUsuario, salt, hash) => {
+
+        const campos = [
+            'es_admin = ?',
+            'perm_devanadoras = ?',
+            'perm_horometros = ?',
+            'perm_visor = ?',
+            'perm_compresores = ?'
+        ];
+
+        const valores = [
+            esAdmin ? 1 : 0,
+            permisos && permisos.devanadoras ? 1 : 0,
+            permisos && permisos.horometros ? 1 : 0,
+            permisos && permisos.visor ? 1 : 0,
+            permisos && permisos.compresores ? 1 : 0
+        ];
+
+        if (salt && hash) {
+            campos.push('salt = ?', 'hash = ?');
+            valores.push(salt, hash);
+        }
+
+        valores.push(id);
+
+        db.run(
+            `UPDATE usuarios SET ${campos.join(', ')} WHERE id = ?`,
+            valores,
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                registrarLog(req, 'usuarios', `Editó el usuario "${nombreUsuario}"`, {
+                    esAdmin: !!esAdmin,
+                    permisos,
+                    contraseñaCambiada: !!(salt && hash)
+                });
+
+                res.json({ status: 'ok' });
+            }
+        );
+    };
+
+    db.get(`SELECT usuario FROM usuarios WHERE id = ?`, [id], (errNombre, filaNombre) => {
+
+        const nombreUsuario = filaNombre ? filaNombre.usuario : `id ${id}`;
+
+        if (pass) {
+
+            const { salt, hash } = hashearPassword(pass);
+
+            aplicarCampos(nombreUsuario, salt, hash);
+
+        } else {
+
+            aplicarCampos(nombreUsuario, null, null);
+        }
+    });
+});
+
+app.delete('/api/usuarios/:id', requiereAdmin, (req, res) => {
+
+    const id = req.params.id;
+
+    db.get(
+        `SELECT usuario, es_admin FROM usuarios WHERE id = ?`,
+        [id],
+        (err, fila) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            if (!fila) {
+                return res.status(404).send('No existe');
+            }
+
+            const eliminar = () => {
+
+                db.run(
+                    `DELETE FROM usuarios WHERE id = ?`,
+                    [id],
+                    err2 => {
+
+                        if (err2) {
+                            console.error(err2);
+                            return res.status(500).send('Error');
+                        }
+
+                        registrarLog(req, 'usuarios', `Eliminó el usuario "${fila.usuario}"`);
+
+                        res.json({ status: 'ok' });
+                    }
+                );
+            };
+
+            if (!fila.es_admin) {
+                return eliminar();
+            }
+
+            // Evitamos quedarnos sin administradores
+            db.get(
+                `SELECT COUNT(*) AS total FROM usuarios WHERE es_admin = 1`,
+                [],
+                (err3, row) => {
+
+                    if (err3) {
+                        console.error(err3);
+                        return res.status(500).send('Error');
+                    }
+
+                    if (row.total <= 1) {
+                        return res.status(400).send('No se puede eliminar al último administrador');
+                    }
+
+                    eliminar();
+                }
+            );
+        }
+    );
+});
+
+// ======================================================
+// LOG DE CAMBIOS (auditoría, solo admin)
+// ======================================================
+
+app.get('/api/log', requiereAdmin, (req, res) => {
+
+    const { usuario, modulo, desde, hasta } = req.query;
+
+    let sql = `SELECT * FROM log_cambios WHERE 1 = 1`;
+    const params = [];
+
+    if (usuario) {
+        sql += ` AND usuario = ?`;
+        params.push(usuario);
     }
 
-    res.status(401).send("Error");
+    if (modulo) {
+        sql += ` AND modulo = ?`;
+        params.push(modulo);
+    }
+
+    if (desde) {
+        sql += ` AND date(fecha_hora) >= date(?)`;
+        params.push(desde);
+    }
+
+    if (hasta) {
+        sql += ` AND date(fecha_hora) <= date(?)`;
+        params.push(hasta);
+    }
+
+    sql += ` ORDER BY fecha_hora DESC LIMIT 1000`;
+
+    db.all(sql, params, (err, filas) => {
+
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error');
+        }
+
+        res.json(filas.map(f => ({
+            id: f.id,
+            usuario: f.usuario,
+            modulo: f.modulo,
+            accion: f.accion,
+            detalle: f.detalle ? JSON.parse(f.detalle) : null,
+            fechaHora: f.fecha_hora
+        })));
+    });
 });
+
+// ======================================================
+// COMPRESORES: CRUD
+// ======================================================
+// NOTA: todavía no tenemos la IP ni el mapeo Modbus real de cada
+// compresor (depende de la marca del PLC). Por eso "ip", "puerto" y
+// "marca" son opcionales por ahora: se puede cargar y programar el
+// horario de cada compresor sin esos datos, y cuando se agreguen el
+// apagado programado pasará de "simulado" (solo registra el evento)
+// a mandar la orden real por Modbus.
+
+app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
+
+    db.all(
+        `SELECT * FROM compresores ORDER BY nombre ASC`,
+        [],
+        (err, filas) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            res.json(filas.map(f => ({
+                id: f.id,
+                nombre: f.nombre,
+                ip: f.ip,
+                puerto: f.puerto,
+                marca: f.marca,
+                horaApagado: f.hora_apagado,
+                activo: !!f.activo
+            })));
+        }
+    );
+});
+
+app.post('/api/compresores', requierePermiso('compresores'), (req, res) => {
+
+    const { nombre, ip, puerto, marca } = req.body;
+
+    if (!nombre) {
+        return res.status(400).send('El nombre es obligatorio');
+    }
+
+    db.run(
+        `INSERT INTO compresores (nombre, ip, puerto, marca)
+         VALUES (?, ?, ?, ?)`,
+        [nombre, ip || null, puerto || 502, marca || null],
+        function (err) {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            registrarLog(req, 'compresores', `Creó el compresor "${nombre}"`, { ip, puerto, marca });
+
+            res.json({ status: 'ok', id: this.lastID });
+        }
+    );
+});
+
+// ======================================================
+// COMPRESORES: HORARIO GLOBAL
+// ======================================================
+// (Registradas antes de las rutas con "/:id" para que Express no
+// confunda "config"/"excepciones"/"eventos" con un id de compresor.)
+
+app.get('/api/compresores/config', requierePermiso('compresores'), (req, res) => {
+
+    db.get(
+        `SELECT valor FROM compresores_config WHERE clave = 'hora_apagado_global'`,
+        [],
+        (err, fila) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            res.json({ horaApagadoGlobal: fila ? fila.valor : null });
+        }
+    );
+});
+
+app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) => {
+
+    const { horaApagadoGlobal } = req.body;
+
+    db.run(
+        `INSERT INTO compresores_config (clave, valor) VALUES ('hora_apagado_global', ?)
+         ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
+        [horaApagadoGlobal || null],
+        err => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            registrarLog(
+                req,
+                'compresores',
+                `Cambió el horario global de apagado a "${horaApagadoGlobal || 'sin definir'}"`
+            );
+
+            res.json({ status: 'ok' });
+        }
+    );
+});
+
+app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
+
+    const { nombre, ip, puerto, marca, horaApagado, activo } = req.body;
+
+    db.run(
+        `UPDATE compresores
+         SET nombre = ?, ip = ?, puerto = ?, marca = ?, hora_apagado = ?, activo = ?
+         WHERE id = ?`,
+        [
+            nombre,
+            ip || null,
+            puerto || 502,
+            marca || null,
+            horaApagado || null,
+            activo === false ? 0 : 1,
+            req.params.id
+        ],
+        err => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
+                ip, puerto, marca, horaApagado, activo
+            });
+
+            res.json({ status: 'ok' });
+        }
+    );
+});
+
+app.delete('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
+
+    db.get(`SELECT nombre FROM compresores WHERE id = ?`, [req.params.id], (errNombre, filaNombre) => {
+
+        const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${req.params.id}`;
+
+        db.run(
+            `DELETE FROM compresores WHERE id = ?`,
+            [req.params.id],
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                db.run(`DELETE FROM compresores_excepciones WHERE compresor_id = ?`, [req.params.id]);
+                db.run(`DELETE FROM compresores_eventos WHERE compresor_id = ?`, [req.params.id]);
+
+                registrarLog(req, 'compresores', `Eliminó el compresor "${nombreCompresor}"`);
+
+                res.json({ status: 'ok' });
+            }
+        );
+    });
+});
+
+// Marcar manualmente un encendido/apagado (útil mientras no hay
+// monitoreo automático por PLC para algún compresor)
+app.post('/api/compresores/:id/evento', requierePermiso('compresores'), (req, res) => {
+
+    const { tipo } = req.body;
+
+    if (tipo !== 'encendido' && tipo !== 'apagado') {
+        return res.status(400).send('Tipo inválido');
+    }
+
+    db.run(
+        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
+         VALUES (?, ?, 'manual')`,
+        [req.params.id, tipo],
+        err => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            db.get(`SELECT nombre FROM compresores WHERE id = ?`, [req.params.id], (errNombre, filaNombre) => {
+
+                const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${req.params.id}`;
+
+                registrarLog(req, 'compresores', `Marcó "${tipo}" manualmente en el compresor "${nombreCompresor}"`);
+            });
+
+            res.json({ status: 'ok' });
+        }
+    );
+});
+
+// ======================================================
+// COMPRESORES: EXCEPCIONES POR CALENDARIO
+// ======================================================
+
+app.get('/api/compresores/excepciones', requierePermiso('compresores'), (req, res) => {
+
+    const { desde, hasta } = req.query;
+
+    let sql = `SELECT * FROM compresores_excepciones`;
+    const params = [];
+
+    if (desde && hasta) {
+        sql += ` WHERE fecha >= ? AND fecha <= ?`;
+        params.push(desde, hasta);
+    }
+
+    sql += ` ORDER BY fecha ASC`;
+
+    db.all(sql, params, (err, filas) => {
+
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error');
+        }
+
+        res.json(filas.map(f => ({
+            id: f.id,
+            compresorId: f.compresor_id,
+            fecha: f.fecha,
+            horaApagado: f.hora_apagado
+        })));
+    });
+});
+
+app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, res) => {
+
+    const { compresorId, fecha, horaApagado } = req.body;
+
+    if (!compresorId || !fecha) {
+        return res.status(400).send('Falta compresor o fecha');
+    }
+
+    db.run(
+        `INSERT INTO compresores_excepciones (compresor_id, fecha, hora_apagado)
+         VALUES (?, ?, ?)
+         ON CONFLICT(compresor_id, fecha) DO UPDATE SET hora_apagado = excluded.hora_apagado`,
+        [compresorId, fecha, horaApagado || null],
+        function (err) {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error');
+            }
+
+            db.get(`SELECT nombre FROM compresores WHERE id = ?`, [compresorId], (errNombre, filaNombre) => {
+
+                const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${compresorId}`;
+
+                registrarLog(
+                    req,
+                    'compresores',
+                    `Programó una excepción de calendario para "${nombreCompresor}" el ${fecha} ` +
+                    `(${horaApagado ? 'apaga a las ' + horaApagado : 'no apaga ese día'})`
+                );
+            });
+
+            res.json({ status: 'ok' });
+        }
+    );
+});
+
+app.delete('/api/compresores/excepciones/:id', requierePermiso('compresores'), (req, res) => {
+
+    db.get(`SELECT * FROM compresores_excepciones WHERE id = ?`, [req.params.id], (errPrev, filaPrev) => {
+
+        db.run(
+            `DELETE FROM compresores_excepciones WHERE id = ?`,
+            [req.params.id],
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                if (filaPrev) {
+
+                    db.get(`SELECT nombre FROM compresores WHERE id = ?`, [filaPrev.compresor_id], (errNombre, filaNombre) => {
+
+                        const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${filaPrev.compresor_id}`;
+
+                        registrarLog(
+                            req,
+                            'compresores',
+                            `Eliminó la excepción de calendario del ${filaPrev.fecha} para "${nombreCompresor}"`
+                        );
+                    });
+                }
+
+                res.json({ status: 'ok' });
+            }
+        );
+    });
+});
+
+// ======================================================
+// COMPRESORES: HISTORIAL DE EVENTOS
+// ======================================================
+
+app.get('/api/compresores/eventos', requierePermiso('compresores'), (req, res) => {
+
+    const { compresorId, desde, hasta } = req.query;
+
+    let sql = `
+        SELECT e.*, c.nombre AS compresor_nombre
+        FROM compresores_eventos e
+        JOIN compresores c ON c.id = e.compresor_id
+        WHERE 1 = 1
+    `;
+    const params = [];
+
+    if (compresorId) {
+        sql += ` AND e.compresor_id = ?`;
+        params.push(compresorId);
+    }
+
+    if (desde) {
+        sql += ` AND date(e.fecha_hora) >= date(?)`;
+        params.push(desde);
+    }
+
+    if (hasta) {
+        sql += ` AND date(e.fecha_hora) <= date(?)`;
+        params.push(hasta);
+    }
+
+    sql += ` ORDER BY e.fecha_hora DESC LIMIT 500`;
+
+    db.all(sql, params, (err, filas) => {
+
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error');
+        }
+
+        res.json(filas.map(f => ({
+            id: f.id,
+            compresorId: f.compresor_id,
+            compresor: f.compresor_nombre,
+            tipo: f.tipo,
+            origen: f.origen,
+            fechaHora: f.fecha_hora
+        })));
+    });
+});
+
+// ======================================================
+// COMPRESORES: PROGRAMADOR DE APAGADO AUTOMÁTICO
+// ======================================================
+
+const ultimoApagadoPorCompresor = {};
+
+async function ejecutarApagadoCompresor(compresor) {
+
+    if (compresor.ip) {
+
+        // TODO: cuando tengamos la marca/mapeo Modbus de cada PLC de
+        // compresor, reemplazar este bloque por la escritura real
+        // (por ejemplo client.writeSingleCoil(direccion, 0)).
+        console.log(
+            `⚠️ Compresor "${compresor.nombre}" (${compresor.ip}): horario de apagado cumplido, ` +
+            `pero todavía no está configurado el mapeo Modbus real (queda pendiente cablear la orden).`
+        );
+
+    } else {
+
+        console.log(
+            `⚠️ Compresor "${compresor.nombre}": horario de apagado cumplido, pero todavía no tiene PLC/IP configurado.`
+        );
+    }
+
+    db.run(
+        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
+         VALUES (?, 'apagado', 'programado')`,
+        [compresor.id]
+    );
+}
+
+setInterval(() => {
+
+    const ahora = new Date();
+    const hoy = ahora.toISOString().slice(0, 10);
+
+    const horaActual =
+        String(ahora.getHours()).padStart(2, '0') + ':' +
+        String(ahora.getMinutes()).padStart(2, '0');
+
+    db.get(
+        `SELECT valor FROM compresores_config WHERE clave = 'hora_apagado_global'`,
+        [],
+        (err, filaGlobal) => {
+
+            if (err) {
+                console.error('Error leyendo horario global de compresores:', err);
+                return;
+            }
+
+            const horaGlobal = filaGlobal ? filaGlobal.valor : null;
+
+            db.all(
+                `SELECT * FROM compresores WHERE activo = 1`,
+                [],
+                (err2, compresores) => {
+
+                    if (err2) {
+                        console.error('Error leyendo compresores:', err2);
+                        return;
+                    }
+
+                    compresores.forEach(c => {
+
+                        if (ultimoApagadoPorCompresor[c.id] === hoy) {
+                            return;
+                        }
+
+                        db.get(
+                            `SELECT hora_apagado FROM compresores_excepciones
+                             WHERE compresor_id = ? AND fecha = ?`,
+                            [c.id, hoy],
+                            (err3, excepcion) => {
+
+                                if (err3) {
+                                    console.error('Error leyendo excepción de compresor:', err3);
+                                    return;
+                                }
+
+                                const horaObjetivo =
+                                    excepcion
+                                        ? excepcion.hora_apagado
+                                        : (c.hora_apagado || horaGlobal);
+
+                                if (horaObjetivo && horaActual === horaObjetivo) {
+
+                                    ultimoApagadoPorCompresor[c.id] = hoy;
+
+                                    ejecutarApagadoCompresor(c);
+                                }
+                            }
+                        );
+                    });
+                }
+            );
+        }
+    );
+
+}, 60 * 1000);
 
 // ======================================================
 // FUNCION MODBUS SEGURA
@@ -255,7 +1227,7 @@ function crearClienteModbus(ip, puerto) {
 // LEER PLC
 // ======================================================
 
-app.get('/api/leer-plc', asegurarAuth, async (req, res) => {
+app.get('/api/leer-plc', requierePermiso('devanadoras'), async (req, res) => {
 
     let socket = null;
 
@@ -318,7 +1290,7 @@ app.get('/api/leer-plc', asegurarAuth, async (req, res) => {
 // ESCRIBIR PLC
 // ======================================================
 
-app.post('/api/setear-plc', asegurarAuth, async (req, res) => {
+app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => {
 
     let socket = null;
 
@@ -354,6 +1326,8 @@ app.post('/api/setear-plc', asegurarAuth, async (req, res) => {
         socket.end();
         socket.destroy();
 
+        registrarLog(req, 'devanadoras', `Seteó DEV ${dev} - CANAL ${canal}`, valores);
+
         res.json({
             status: 'ok'
         });
@@ -376,7 +1350,7 @@ app.post('/api/setear-plc', asegurarAuth, async (req, res) => {
 // ======================================================
 // ESCRIBIR EN TODOS LOS CANALES DE TODAS LAS MÁQUINAS (12 CANALES EN TOTAL)
 // ======================================================
-app.post('/api/setear-todas', asegurarAuth, async (req, res) => {
+app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) => {
     try {
         const { valores } = req.body;
 
@@ -423,6 +1397,8 @@ app.post('/api/setear-todas', asegurarAuth, async (req, res) => {
             }
         }
 
+        registrarLog(req, 'devanadoras', 'Seteó una receta en TODAS las máquinas (canal 1 y 2, las 6)', valores);
+
         res.json({ status: 'ok' });
 
     } catch (e) {
@@ -434,7 +1410,7 @@ app.post('/api/setear-todas', asegurarAuth, async (req, res) => {
 // RECETAS SQLITE
 // ======================================================
 
-app.get('/api/recetas', asegurarAuth, (req, res) => {
+app.get('/api/recetas', requierePermiso('devanadoras'), (req, res) => {
 
     db.all(
         `SELECT * FROM recetas ORDER BY fecha DESC`,
@@ -475,7 +1451,7 @@ app.get('/api/recetas', asegurarAuth, (req, res) => {
     );
 });
 
-app.post('/api/recetas', asegurarAuth, (req, res) => {
+app.post('/api/recetas', requierePermiso('devanadoras'), (req, res) => {
 
     const { nombre, valores } = req.body;
 
@@ -495,6 +1471,8 @@ app.post('/api/recetas', asegurarAuth, (req, res) => {
                 return res.status(500).send("Error");
             }
 
+            registrarLog(req, 'devanadoras', `Guardó la receta "${nombre}"`, valores);
+
             res.json({
                 status: 'ok'
             });
@@ -505,25 +1483,32 @@ app.post('/api/recetas', asegurarAuth, (req, res) => {
 // ELIMINAR RECETA
 // ======================================================
 
-app.delete('/api/recetas/:id', asegurarAuth, (req, res) => {
+app.delete('/api/recetas/:id', requierePermiso('devanadoras'), (req, res) => {
 
-    db.run(
-        `DELETE FROM recetas WHERE id = ?`,
-        [req.params.id],
-        err => {
+    db.get(`SELECT nombre FROM recetas WHERE id = ?`, [req.params.id], (errNombre, filaNombre) => {
 
-            if (err) {
+        const nombreReceta = filaNombre ? filaNombre.nombre : `id ${req.params.id}`;
 
-                console.error(err);
+        db.run(
+            `DELETE FROM recetas WHERE id = ?`,
+            [req.params.id],
+            err => {
 
-                return res.status(500).send("Error");
+                if (err) {
+
+                    console.error(err);
+
+                    return res.status(500).send("Error");
+                }
+
+                registrarLog(req, 'devanadoras', `Eliminó la receta "${nombreReceta}"`);
+
+                res.json({
+                    status: 'ok'
+                });
             }
-
-            res.json({
-                status: 'ok'
-            });
-        }
-    );
+        );
+    });
 });
 
 // ======================================================
@@ -560,6 +1545,13 @@ let opActual = '';
 let canoActual = '';
 
 let lecturaEnCurso = false;
+
+// Al apagarse la variable del PLC, seguimos tomando muestras
+// durante este tiempo extra antes de cerrar el ensayo y generar el PDF.
+const GRACIA_FIN_ENSAYO_MS = 2000;
+
+let enGracia = false;
+let tiempoApagado = null;
 
 // ======================================================
 // MODBUS ENSAYO
@@ -818,6 +1810,10 @@ setInterval(async () => {
 
             ensayoActivo = true;
 
+            enGracia = false;
+
+            tiempoApagado = null;
+
             datosEnsayo = [];
 
             console.log('INICIO ENSAYO');
@@ -840,10 +1836,37 @@ setInterval(async () => {
         }
 
         // ==========================================
+        // VARIABLE APAGADA: inicia/cancela la gracia
+        // ==========================================
+
+        if (ensayoActivo && !ensayando && !enGracia) {
+
+            enGracia = true;
+
+            tiempoApagado = Date.now();
+
+            console.log(
+                `Variable apagada, tomando muestras ${GRACIA_FIN_ENSAYO_MS / 1000}s más...`
+            );
+
+        } else if (ensayoActivo && ensayando && enGracia) {
+
+            enGracia = false;
+
+            tiempoApagado = null;
+
+            console.log('Variable volvió a activarse, ensayo continúa');
+        }
+
+        const dentroDeGracia =
+            enGracia &&
+            (Date.now() - tiempoApagado < GRACIA_FIN_ENSAYO_MS);
+
+        // ==========================================
         // MUESTRA
         // ==========================================
 
-        if (ensayando && ensayoActivo) {
+        if (ensayoActivo && (ensayando || dentroDeGracia)) {
 
             const presionData =
                 await client.readHoldingRegisters(361, 1);
@@ -862,11 +1885,15 @@ setInterval(async () => {
         // FIN ENSAYO
         // ==========================================
 
-        if (!ensayando && ensayoActivo) {
+        if (ensayoActivo && enGracia && !dentroDeGracia) {
 
             console.log('FIN ENSAYO');
 
             ensayoActivo = false;
+
+            enGracia = false;
+
+            tiempoApagado = null;
 
             await generarPDFEnsayo();
 
@@ -900,7 +1927,7 @@ setInterval(async () => {
     }
 
 }, 1000);
-app.get('/api/pdfs', asegurarVisor, (req, res) => {
+app.get('/api/pdfs', requierePermiso('visor'), (req, res) => {
 
     fs.readdir('./pdfs', (err, archivos) => {
 
@@ -925,7 +1952,7 @@ app.get('/api/pdfs', asegurarVisor, (req, res) => {
 // LISTADO DE ENSAYOS
 // ======================================================
 
-app.get('/api/ensayos', (req, res) => {
+app.get('/api/ensayos', requierePermiso('visor'), (req, res) => {
     // IMPORTANTE: Asegurate de que aquí diga 'pdfs' como arreglamos antes
     const carpeta = path.join(__dirname, 'pdfs');
 
@@ -968,13 +1995,13 @@ app.get('/api/ensayos', (req, res) => {
 // ======================================================
 // SERVER
 // ======================================================
-app.get('/api/pdf/:nombre', asegurarVisor, (req, res) => {
+app.get('/api/pdf/:nombre', requierePermiso('visor'), (req, res) => {
 
     const archivo =
         path.join(
             __dirname,
             'pdfs',
-            req.params.nombre
+            path.basename(req.params.nombre)
         );
 
     if (!fs.existsSync(archivo)) {
@@ -984,6 +2011,25 @@ app.get('/api/pdf/:nombre', asegurarVisor, (req, res) => {
     }
 
     res.download(archivo);
+});
+
+// Descarga/visualización directa de un PDF (usada por el enlace del Visor de Ensayos)
+app.get('/pdfs/:archivo', requierePermiso('visor'), (req, res) => {
+
+    const ruta =
+        path.join(
+            __dirname,
+            'pdfs',
+            path.basename(req.params.archivo)
+        );
+
+    if (!fs.existsSync(ruta)) {
+
+        return res.status(404)
+            .send("No existe");
+    }
+
+    res.sendFile(ruta);
 });
 // ======================================================
 // CONTROL DE HORÓMETROS VIA MQTT Y SQLITE (OBJETO JSON)
@@ -1062,7 +2108,7 @@ setInterval(() => {
 // ======================================================
 
 // 1. Obtener lista de máquinas únicas para los filtros de la pantalla
-app.get('/api/horometros/maquinas', (req, res) => {
+app.get('/api/horometros/maquinas', requierePermiso('horometros'), (req, res) => {
     db.all(`SELECT DISTINCT maquina FROM horometros ORDER BY maquina ASC`, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows.map(r => r.maquina));
@@ -1070,7 +2116,7 @@ app.get('/api/horometros/maquinas', (req, res) => {
 });
 
 // 2. Obtener los datos filtrados por máquina y fecha
-app.get('/api/horometros/datos', (req, res) => {
+app.get('/api/horometros/datos', requierePermiso('horometros'), (req, res) => {
     const { maquinas, desde, hasta } = req.query;
     
     if (!maquinas || !desde || !hasta) {
@@ -1096,9 +2142,34 @@ app.get('/api/horometros/datos', (req, res) => {
 });
 
 // 3. Ruta para que Express sirva la nueva interfaz gráfica
-app.get('/horometros', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'horometros.html'));
+app.get('/horometros', requierePermiso('horometros'), (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'horometros.html'));
 });
+
+// ======================================================
+// PÁGINAS PROTEGIDAS: VISOR Y ADMINISTRADOR
+// ======================================================
+
+app.get('/visor', requierePermiso('visor'), (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'visor.html'));
+});
+
+app.get('/admin', requiereAdmin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'admin.html'));
+});
+
+app.get('/log', requiereAdmin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'log.html'));
+});
+
+app.get('/compresores', requierePermiso('compresores'), (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'compresores.html'));
+});
+
+app.get('/compresores/historial', requierePermiso('compresores'), (req, res) => {
+    res.sendFile(path.join(__dirname, 'protegido', 'compresores-historial.html'));
+});
+
 app.listen(PORT, '0.0.0.0', () => {
 
     console.log(

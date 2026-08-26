@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Programación de Compresores</title>
+<style>
+    body { font-family: Arial, sans-serif; background:#121212; color:#eee; margin:0; padding:20px; }
+    a.volver { display:inline-block; margin-bottom:10px; color:#007bff; text-decoration:none; font-weight:bold; }
+    a.volver-hist { display:inline-block; margin-bottom:10px; margin-left:15px; color:#17a2b8; text-decoration:none; font-weight:bold; }
+    h1 { color:#007bff; }
+    h2 { color:#007bff; font-size:16px; margin-top:0; }
+    .panel { background:#1f1f1f; border:1px solid #333; border-radius:8px; padding:20px; max-width:1000px; margin:0 auto 20px; }
+    label { display:block; margin-bottom:4px; color:#aaa; font-size:13px; }
+    input[type=text], input[type=time], input[type=number], select {
+        padding:8px; background:#2a2a2a; color:white; border:1px solid #444; border-radius:4px;
+    }
+    .fila-form { display:flex; gap:15px; flex-wrap:wrap; align-items:flex-end; }
+    button { padding:8px 15px; cursor:pointer; border:none; border-radius:4px; font-weight:bold; }
+    .btn-crear { background:#28a745; color:white; }
+    .btn-guardar { background:#007bff; color:white; }
+    .btn-eliminar { background:#dc3545; color:white; }
+    .btn-on { background:#28a745; color:white; }
+    .btn-off { background:#6c757d; color:white; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th, td { border:1px solid #333; padding:8px; text-align:left; font-size:13px; }
+    th { background:#222; }
+    input[type=text].mini, input[type=time].mini, input[type=number].mini { width:90px; }
+    .msg { margin-top:10px; font-size:13px; min-height:16px; }
+    .msg.error { color:#dc3545; }
+    .msg.ok { color:#28a745; }
+
+    .cal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .cal-header button { background:#333; color:white; }
+    .cal-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; }
+    .cal-dia-nombre { text-align:center; font-size:12px; color:#888; padding:4px; }
+    .cal-dia { background:#2a2a2a; border:1px solid #444; border-radius:4px; min-height:55px; padding:4px; cursor:pointer; font-size:12px; }
+    .cal-dia:hover { border-color:#007bff; }
+    .cal-dia.vacio { background:transparent; border:none; cursor:default; }
+    .cal-dia.con-excepcion { border-color:#ffc107; background:#3a2f0f; }
+    .cal-dia .num { font-weight:bold; }
+    .cal-dia .marca { color:#ffc107; font-size:11px; display:block; margin-top:4px; }
+    .cal-dia.seleccionado { border-color:#00bfff; border-width:2px; }
+
+    .panel-excepcion { background:#2a2a2a; border:1px solid #444; border-radius:6px; padding:15px; margin-top:15px; }
+</style>
+</head>
+<body>
+
+<a class="volver" href="/">&larr; Volver al menú</a>
+<a class="volver-hist" href="/compresores/historial">Ver historial de encendido/apagado &rarr;</a>
+<h1>Programación de Compresores</h1>
+
+<div class="panel">
+    <h2>Horario global de apagado (aplica a todos, salvo que tengan horario propio)</h2>
+    <div class="fila-form">
+        <div>
+            <label>Hora de apagado diaria</label>
+            <input type="time" id="hora-global">
+        </div>
+        <button class="btn-guardar" onclick="guardarHoraGlobal()">Guardar horario global</button>
+    </div>
+    <div id="msg-global" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Agregar compresor</h2>
+    <div class="fila-form">
+        <div>
+            <label>Nombre</label>
+            <input type="text" id="nc-nombre" placeholder="Ej: Compresor 1">
+        </div>
+        <div>
+            <label>IP del PLC (opcional por ahora)</label>
+            <input type="text" id="nc-ip" placeholder="Se carga después">
+        </div>
+        <div>
+            <label>Puerto</label>
+            <input type="number" id="nc-puerto" value="502" class="mini">
+        </div>
+        <div>
+            <label>Marca del PLC (opcional por ahora)</label>
+            <input type="text" id="nc-marca" placeholder="Se carga después">
+        </div>
+        <button class="btn-crear" onclick="crearCompresor()">Agregar compresor</button>
+    </div>
+    <div id="msg-crear" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Compresores</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>IP</th>
+                <th>Puerto</th>
+                <th>Marca</th>
+                <th>Horario propio</th>
+                <th>Activo</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-compresores"></tbody>
+    </table>
+    <div id="msg-tabla" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Excepciones por calendario</h2>
+    <p style="font-size:13px; color:#aaa;">
+        Elegí un compresor y hacé click en un día para programarle un horario de apagado distinto
+        solo para ese día (o dejarlo sin apagar ese día).
+    </p>
+
+    <div class="fila-form" style="margin-bottom:15px;">
+        <div>
+            <label>Compresor</label>
+            <select id="cal-compresor" onchange="cargarExcepcionesMes()"></select>
+        </div>
+    </div>
+
+    <div class="cal-header">
+        <button onclick="cambiarMes(-1)">&larr; Mes anterior</button>
+        <div id="cal-titulo" style="font-weight:bold;"></div>
+        <button onclick="cambiarMes(1)">Mes siguiente &rarr;</button>
+    </div>
+
+    <div class="cal-grid" id="cal-nombres-dias"></div>
+    <div class="cal-grid" id="cal-grid" style="margin-top:4px;"></div>
+
+    <div class="panel-excepcion" id="panel-excepcion" style="display:none;">
+        <h3 id="exc-fecha-titulo" style="margin-top:0; color:#00bfff;"></h3>
+        <div class="fila-form">
+            <div>
+                <label>Hora de apagado ese día (vacío = no apagar)</label>
+                <input type="time" id="exc-hora">
+            </div>
+            <button class="btn-guardar" onclick="guardarExcepcion()">Guardar excepción</button>
+            <button class="btn-eliminar" onclick="eliminarExcepcionSeleccionada()">Quitar excepción (volver al horario normal)</button>
+        </div>
+        <div id="msg-excepcion" class="msg"></div>
+    </div>
+</div>
+
+<script>
+
+let compresores = [];
+let excepcionesMes = [];
+let mesActual = new Date();
+mesActual.setDate(1);
+let fechaSeleccionada = null;
+
+const NOMBRES_MES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const NOMBRES_DIA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+function fmtFecha(d) {
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+async function cargarHoraGlobal() {
+    const res = await fetch('/api/compresores/config');
+    if (res.ok) {
+        const data = await res.json();
+        document.getElementById('hora-global').value = data.horaApagadoGlobal || '';
+    }
+}
+
+async function guardarHoraGlobal() {
+    const hora = document.getElementById('hora-global').value;
+    const res = await fetch('/api/compresores/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ horaApagadoGlobal: hora || null })
+    });
+    const msg = document.getElementById('msg-global');
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = 'Horario global guardado.';
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error guardando el horario global.';
+    }
+}
+
+async function cargarCompresores() {
+    const res = await fetch('/api/compresores');
+    if (!res.ok) return;
+    compresores = await res.json();
+
+    const tbody = document.getElementById('tabla-compresores');
+    tbody.innerHTML = '';
+
+    compresores.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input type="text" class="mini" style="width:130px;" data-campo="nombre" value="${c.nombre}"></td>
+            <td><input type="text" class="mini" style="width:110px;" data-campo="ip" value="${c.ip || ''}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="puerto" value="${c.puerto || 502}"></td>
+            <td><input type="text" class="mini" style="width:90px;" data-campo="marca" value="${c.marca || ''}" placeholder="(sin definir)"></td>
+            <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
+            <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
+            <td>
+                <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar</button>
+                <button class="btn-on" onclick="marcarEvento(${c.id}, 'encendido')">▶ Encendido</button>
+                <button class="btn-off" onclick="marcarEvento(${c.id}, 'apagado')">⏹ Apagado</button>
+                <button class="btn-eliminar" onclick="eliminarCompresor(${c.id}, '${c.nombre}')">Eliminar</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    actualizarSelectCompresores();
+}
+
+function actualizarSelectCompresores() {
+    const sel = document.getElementById('cal-compresor');
+    const actual = sel.value;
+    sel.innerHTML = '';
+
+    if (compresores.length === 0) {
+        sel.innerHTML = '<option value="">-- No hay compresores cargados --</option>';
+        return;
+    }
+
+    compresores.forEach(c => {
+        sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
+    });
+
+    if (actual && compresores.some(c => String(c.id) === actual)) {
+        sel.value = actual;
+    }
+
+    cargarExcepcionesMes();
+}
+
+async function crearCompresor() {
+    const nombre = document.getElementById('nc-nombre').value.trim();
+    const msg = document.getElementById('msg-crear');
+
+    if (!nombre) {
+        msg.className = 'msg error';
+        msg.innerText = 'El nombre es obligatorio.';
+        return;
+    }
+
+    const body = {
+        nombre,
+        ip: document.getElementById('nc-ip').value.trim(),
+        puerto: parseInt(document.getElementById('nc-puerto').value) || 502,
+        marca: document.getElementById('nc-marca').value.trim()
+    };
+
+    const res = await fetch('/api/compresores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+        msg.className = 'msg error';
+        msg.innerText = 'Error creando el compresor.';
+        return;
+    }
+
+    msg.className = 'msg ok';
+    msg.innerText = 'Compresor agregado.';
+
+    document.getElementById('nc-nombre').value = '';
+    document.getElementById('nc-ip').value = '';
+    document.getElementById('nc-marca').value = '';
+    document.getElementById('nc-puerto').value = 502;
+
+    cargarCompresores();
+}
+
+async function guardarCompresor(id, boton) {
+    const tr = boton.closest('tr');
+    const leer = campo => tr.querySelector(`[data-campo="${campo}"]`).value;
+    const leerChk = campo => tr.querySelector(`[data-campo="${campo}"]`).checked;
+
+    const body = {
+        nombre: leer('nombre'),
+        ip: leer('ip'),
+        puerto: parseInt(leer('puerto')) || 502,
+        marca: leer('marca'),
+        horaApagado: leer('horaApagado'),
+        activo: leerChk('activo')
+    };
+
+    const res = await fetch(`/api/compresores/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+
+    const msg = document.getElementById('msg-tabla');
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = `Cambios guardados para "${body.nombre}".`;
+        cargarCompresores();
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error guardando los cambios.';
+    }
+}
+
+async function eliminarCompresor(id, nombre) {
+    if (!confirm(`¿Eliminar el compresor "${nombre}" y todo su historial/excepciones?`)) return;
+
+    const res = await fetch(`/api/compresores/${id}`, { method: 'DELETE' });
+    const msg = document.getElementById('msg-tabla');
+
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = `Compresor "${nombre}" eliminado.`;
+        cargarCompresores();
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error eliminando el compresor.';
+    }
+}
+
+async function marcarEvento(id, tipo) {
+    await fetch(`/api/compresores/${id}/evento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo })
+    });
+    const msg = document.getElementById('msg-tabla');
+    msg.className = 'msg ok';
+    msg.innerText = `Evento "${tipo}" registrado.`;
+}
+
+// ============ CALENDARIO DE EXCEPCIONES ============
+
+function cambiarMes(delta) {
+    mesActual.setMonth(mesActual.getMonth() + delta);
+    cargarExcepcionesMes();
+}
+
+async function cargarExcepcionesMes() {
+    const compresorId = document.getElementById('cal-compresor').value;
+
+    const desde = new Date(mesActual.getFullYear(), mesActual.getMonth(), 1);
+    const hasta = new Date(mesActual.getFullYear(), mesActual.getMonth() + 1, 0);
+
+    if (compresorId) {
+        const res = await fetch(`/api/compresores/excepciones?desde=${fmtFecha(desde)}&hasta=${fmtFecha(hasta)}`);
+        const todas = res.ok ? await res.json() : [];
+        excepcionesMes = todas.filter(e => String(e.compresorId) === String(compresorId));
+    } else {
+        excepcionesMes = [];
+    }
+
+    dibujarCalendario();
+}
+
+function dibujarCalendario() {
+    document.getElementById('cal-titulo').innerText = `${NOMBRES_MES[mesActual.getMonth()]} ${mesActual.getFullYear()}`;
+
+    const nombresDiv = document.getElementById('cal-nombres-dias');
+    nombresDiv.innerHTML = NOMBRES_DIA.map(n => `<div class="cal-dia-nombre">${n}</div>`).join('');
+
+    const primerDia = new Date(mesActual.getFullYear(), mesActual.getMonth(), 1);
+    const diasEnMes = new Date(mesActual.getFullYear(), mesActual.getMonth() + 1, 0).getDate();
+    const offset = primerDia.getDay();
+
+    const grid = document.getElementById('cal-grid');
+    grid.innerHTML = '';
+
+    for (let i = 0; i < offset; i++) {
+        grid.innerHTML += `<div class="cal-dia vacio"></div>`;
+    }
+
+    for (let dia = 1; dia <= diasEnMes; dia++) {
+        const fecha = new Date(mesActual.getFullYear(), mesActual.getMonth(), dia);
+        const fechaStr = fmtFecha(fecha);
+        const exc = excepcionesMes.find(e => e.fecha === fechaStr);
+
+        const div = document.createElement('div');
+        div.className = 'cal-dia' + (exc ? ' con-excepcion' : '') + (fechaStr === fechaSeleccionada ? ' seleccionado' : '');
+        div.innerHTML = `<span class="num">${dia}</span>${exc ? `<span class="marca">${exc.horaApagado || 'No apaga'}</span>` : ''}`;
+        div.onclick = () => seleccionarDia(fechaStr, exc);
+
+        grid.appendChild(div);
+    }
+}
+
+function seleccionarDia(fechaStr, exc) {
+    const compresorId = document.getElementById('cal-compresor').value;
+    if (!compresorId) {
+        alert('Elegí primero un compresor.');
+        return;
+    }
+
+    fechaSeleccionada = fechaStr;
+
+    document.getElementById('panel-excepcion').style.display = 'block';
+    document.getElementById('exc-fecha-titulo').innerText = `Excepción para el ${fechaStr}`;
+    document.getElementById('exc-hora').value = exc ? (exc.horaApagado || '') : '';
+    document.getElementById('msg-excepcion').innerText = '';
+
+    dibujarCalendario();
+}
+
+async function guardarExcepcion() {
+    const compresorId = document.getElementById('cal-compresor').value;
+    const hora = document.getElementById('exc-hora').value;
+    const msg = document.getElementById('msg-excepcion');
+
+    if (!fechaSeleccionada || !compresorId) return;
+
+    const res = await fetch('/api/compresores/excepciones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ compresorId, fecha: fechaSeleccionada, horaApagado: hora || null })
+    });
+
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = 'Excepción guardada.';
+        cargarExcepcionesMes();
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error guardando la excepción.';
+    }
+}
+
+async function eliminarExcepcionSeleccionada() {
+    const compresorId = document.getElementById('cal-compresor').value;
+    const exc = excepcionesMes.find(e => e.fecha === fechaSeleccionada && String(e.compresorId) === String(compresorId));
+    const msg = document.getElementById('msg-excepcion');
+
+    if (!exc) {
+        msg.className = 'msg error';
+        msg.innerText = 'Ese día no tiene una excepción cargada.';
+        return;
+    }
+
+    const res = await fetch(`/api/compresores/excepciones/${exc.id}`, { method: 'DELETE' });
+
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = 'Excepción eliminada, ese día vuelve al horario normal.';
+        document.getElementById('exc-hora').value = '';
+        cargarExcepcionesMes();
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error eliminando la excepción.';
+    }
+}
+
+(async function init() {
+    await cargarHoraGlobal();
+    await cargarCompresores();
+})();
+
+</script>
+</body>
+</html>

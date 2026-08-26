@@ -9,7 +9,12 @@
         .btn-dev { padding: 25px; cursor: pointer; background: #222; color: #fff; border: 1px solid #444; border-radius: 8px; font-weight: bold; }
         .btn-dev:hover { border-color: #007bff; background: #2a2a2a; }
         
-        #login-screen { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:2000; display:flex; justify-content:center; align-items:center; }
+        #login-screen, #menu-screen { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:2000; display:flex; justify-content:center; align-items:center; }
+        #menu-screen { display:none; }
+        .btn-menu { padding: 18px; background:#222; color:#fff; border:1px solid #444; border-radius:8px; font-weight:bold; cursor:pointer; width: 87%; font-size: 15px; display:flex; align-items:center; justify-content:center; gap:8px; }
+        .btn-menu:hover { border-color:#007bff; background:#2a2a2a; }
+        #panel-devanadoras { display:none; }
+        .btn-volver { background:#444; color:white; border:none; border-radius:4px; padding:8px 14px; cursor:pointer; font-weight:bold; margin:15px; }
         .modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#1f1f1f; padding:20px; border-radius:10px; border:2px solid #007bff; z-index:1000; width:880px; }
         .overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:500; }
         
@@ -29,7 +34,7 @@
 
     <div id="login-screen">
     <div style="background: #1f1f1f; padding: 30px; border-radius: 10px; border: 2px solid #333; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 320px;">
-        <h2 style="color: #007bff; margin-bottom: 20px; font-family: sans-serif; font-size: 22px;">HMI CURADO FIBRA</h2>
+        <h2 style="color: #007bff; margin-bottom: 20px; font-family: sans-serif; font-size: 22px;">SISTEMA DE CONTROL</h2>
         
         <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 20px;">
             <input type="text" id="u" placeholder="Usuario" style="padding: 10px; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px; width: 80%; text-align: center; font-size: 15px;">
@@ -39,20 +44,34 @@
             </button>
         </div>
 
-        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
-
-        <h4 style="color: #888; margin-bottom: 15px; font-family: sans-serif; font-weight: normal; font-size: 12px; letter-spacing: 1px;">ACCESOS RÁPIDOS</h4>
-        <div style="display: flex; flex-direction: column; gap: 10px; align-items: center;">
-            <button type="button" onclick="window.location.href='/horometros'" style="padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; width: 87%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px;">
-                ⏱️ Ver Horómetros
-            </button>
-            <button type="button" onclick="window.location.href='/visor.html'" style="padding: 10px; background: #17a2b8; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; width: 87%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px;">
-                📋 Visor de Ensayos
-            </button>
-        </div>
+        <div id="msg-login" style="color:#dc3545; font-size:13px; margin-top:10px;"></div>
     </div>
 </div>
 
+    <div id="menu-screen">
+    <div style="background: #1f1f1f; padding: 30px; border-radius: 10px; border: 2px solid #333; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 320px;">
+        <h2 id="menu-titulo" style="color: #007bff; margin-bottom: 20px; font-family: sans-serif; font-size: 20px;">MENÚ PRINCIPAL</h2>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 10px;">
+            <button type="button" id="btn-menu-devanadoras" class="btn-menu" onclick="abrirDevanadoras()">🎛️ Control de Devanadoras</button>
+            <button type="button" id="btn-menu-horometros" class="btn-menu" onclick="window.location.href='/horometros'">⏱️ Horómetros</button>
+            <button type="button" id="btn-menu-visor" class="btn-menu" onclick="window.location.href='/visor'">📋 Visor de Ensayos</button>
+            <button type="button" id="btn-menu-compresores" class="btn-menu" onclick="window.location.href='/compresores'">🌀 Compresores</button>
+            <button type="button" id="btn-menu-historial-compresores" class="btn-menu" onclick="window.location.href='/compresores/historial'">📊 Historial de Compresores</button>
+            <button type="button" id="btn-menu-admin" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/admin'">🛠️ Administración de Usuarios</button>
+            <button type="button" id="btn-menu-log" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/log'">📜 Registro de Cambios</button>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+
+        <button type="button" onclick="logout()" style="padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; width: 87%; font-size: 14px;">
+            Cerrar sesión
+        </button>
+    </div>
+</div>
+
+    <div id="panel-devanadoras">
+    <button class="btn-volver" onclick="volverMenu()">&larr; Volver al menú</button>
     <h1>CONTROL DE CURADO - FIBRA</h1>
     <div class="grid" id="container"></div>
 
@@ -86,6 +105,7 @@
             </div>
         </div>
     </div>
+    </div>
 
     <script>
         const campos = [
@@ -110,9 +130,48 @@
     <span class="val-act" id="act-${c.id}">--</span><input type="number" id="inp-${c.id}" oninput="calc(); calc2();calc3();"></div>`;
         });
 
+        let yo = null;
+
         async function login() {
+            const msg = document.getElementById('msg-login');
+            msg.innerText = '';
             const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user:document.getElementById('u').value, pass:document.getElementById('p').value}) });
-            if(res.ok) document.getElementById('login-screen').style.display='none';
+            if(!res.ok) { msg.innerText = 'Usuario o contraseña incorrectos'; return; }
+
+            const rMe = await fetch('/api/me');
+            yo = await rMe.json();
+
+            document.getElementById('login-screen').style.display = 'none';
+            mostrarMenu();
+        }
+
+        function mostrarMenu() {
+            document.getElementById('menu-titulo').innerText = `MENÚ PRINCIPAL — ${yo.usuario}`;
+            document.getElementById('btn-menu-devanadoras').style.display = (yo.esAdmin || yo.permisos.devanadoras) ? 'flex' : 'none';
+            document.getElementById('btn-menu-horometros').style.display = (yo.esAdmin || yo.permisos.horometros) ? 'flex' : 'none';
+            document.getElementById('btn-menu-visor').style.display = (yo.esAdmin || yo.permisos.visor) ? 'flex' : 'none';
+            document.getElementById('btn-menu-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
+            document.getElementById('btn-menu-historial-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
+            document.getElementById('btn-menu-admin').style.display = yo.esAdmin ? 'flex' : 'none';
+            document.getElementById('btn-menu-log').style.display = yo.esAdmin ? 'flex' : 'none';
+
+            document.getElementById('panel-devanadoras').style.display = 'none';
+            document.getElementById('menu-screen').style.display = 'flex';
+        }
+
+        function abrirDevanadoras() {
+            document.getElementById('menu-screen').style.display = 'none';
+            document.getElementById('panel-devanadoras').style.display = 'block';
+        }
+
+        function volverMenu() {
+            document.getElementById('panel-devanadoras').style.display = 'none';
+            mostrarMenu();
+        }
+
+        async function logout() {
+            await fetch('/api/logout', { method:'POST' });
+            window.location.reload();
         }
 
         async function abrir(d, c) {

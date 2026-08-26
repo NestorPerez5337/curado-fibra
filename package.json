@@ -10,15 +10,15 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
- "dependencies": {
-  "dotenv": "^16.5.0",
-  "express": "^5.2.1",
-  "express-session": "^1.19.0",
-  "chartjs-node-canvas": "^4.1.6",
-  "mqtt": "^5.5.0",
-  "jsmodbus": "^4.0.10",
-  "pdfkit": "^0.15.0",
-  "chartjs-plugin-datalabels": "^2.2.0",
-  "sqlite3": "^5.1.7"
-}
+  "dependencies": {
+    "chartjs-node-canvas": "^5.0.0",
+    "chartjs-plugin-datalabels": "^2.2.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "jsmodbus": "^4.0.10",
+    "mqtt": "^5.5.0",
+    "pdfkit": "^0.15.0",
+    "sqlite3": "^6.0.1"
+  }
 }
