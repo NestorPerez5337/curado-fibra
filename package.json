@@ -11,7 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "chartjs-node-canvas": "^5.0.0",
+    "chartjs-node-canvas": "^4.1.6",
     "chartjs-plugin-datalabels": "^2.2.0",
     "dotenv": "^16.5.0",
     "express": "^5.2.1",
@@ -19,6 +19,6 @@
     "jsmodbus": "^4.0.10",
     "mqtt": "^5.5.0",
     "pdfkit": "^0.15.0",
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^5.1.7"
   }
 }
