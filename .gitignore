@@ -2,3 +2,6 @@ node_modules/
 .tools/
 .env
 *.log
+data/
+pdfs/
+backups/

@@ -63,38 +63,15 @@
 </div>
 
 <div class="panel">
-    <h2>Agregar compresor</h2>
-    <div class="fila-form">
-        <div>
-            <label>Nombre</label>
-            <input type="text" id="nc-nombre" placeholder="Ej: Compresor 1">
-        </div>
-        <div>
-            <label>IP del PLC (opcional por ahora)</label>
-            <input type="text" id="nc-ip" placeholder="Se carga después">
-        </div>
-        <div>
-            <label>Puerto</label>
-            <input type="number" id="nc-puerto" value="502" class="mini">
-        </div>
-        <div>
-            <label>Marca del PLC (opcional por ahora)</label>
-            <input type="text" id="nc-marca" placeholder="Se carga después">
-        </div>
-        <button class="btn-crear" onclick="crearCompresor()">Agregar compresor</button>
-    </div>
-    <div id="msg-crear" class="msg"></div>
-</div>
-
-<div class="panel">
     <h2>Compresores</h2>
+    <p style="font-size:13px; color:#aaa; margin-top:0;">
+        El alta de compresores nuevos y la configuración de su PLC (IP, puerto, marca) las maneja
+        el administrador desde su panel. Acá solo se programa el horario de cada uno.
+    </p>
     <table>
         <thead>
             <tr>
                 <th>Nombre</th>
-                <th>IP</th>
-                <th>Puerto</th>
-                <th>Marca</th>
                 <th>Horario propio</th>
                 <th>Activo</th>
                 <th>Acciones</th>
@@ -205,17 +182,13 @@ async function cargarCompresores() {
     compresores.forEach(c => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><input type="text" class="mini" style="width:130px;" data-campo="nombre" value="${c.nombre}"></td>
-            <td><input type="text" class="mini" style="width:110px;" data-campo="ip" value="${c.ip || ''}" placeholder="(sin definir)"></td>
-            <td><input type="number" class="mini" style="width:70px;" data-campo="puerto" value="${c.puerto || 502}"></td>
-            <td><input type="text" class="mini" style="width:90px;" data-campo="marca" value="${c.marca || ''}" placeholder="(sin definir)"></td>
+            <td>${c.nombre}</td>
             <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
             <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
             <td>
                 <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar</button>
                 <button class="btn-on" onclick="marcarEvento(${c.id}, 'encendido')">▶ Encendido</button>
                 <button class="btn-off" onclick="marcarEvento(${c.id}, 'apagado')">⏹ Apagado</button>
-                <button class="btn-eliminar" onclick="eliminarCompresor(${c.id}, '${c.nombre}')">Eliminar</button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -245,56 +218,12 @@ function actualizarSelectCompresores() {
     cargarExcepcionesMes();
 }
 
-async function crearCompresor() {
-    const nombre = document.getElementById('nc-nombre').value.trim();
-    const msg = document.getElementById('msg-crear');
-
-    if (!nombre) {
-        msg.className = 'msg error';
-        msg.innerText = 'El nombre es obligatorio.';
-        return;
-    }
-
-    const body = {
-        nombre,
-        ip: document.getElementById('nc-ip').value.trim(),
-        puerto: parseInt(document.getElementById('nc-puerto').value) || 502,
-        marca: document.getElementById('nc-marca').value.trim()
-    };
-
-    const res = await fetch('/api/compresores', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-        msg.className = 'msg error';
-        msg.innerText = 'Error creando el compresor.';
-        return;
-    }
-
-    msg.className = 'msg ok';
-    msg.innerText = 'Compresor agregado.';
-
-    document.getElementById('nc-nombre').value = '';
-    document.getElementById('nc-ip').value = '';
-    document.getElementById('nc-marca').value = '';
-    document.getElementById('nc-puerto').value = 502;
-
-    cargarCompresores();
-}
-
 async function guardarCompresor(id, boton) {
     const tr = boton.closest('tr');
     const leer = campo => tr.querySelector(`[data-campo="${campo}"]`).value;
     const leerChk = campo => tr.querySelector(`[data-campo="${campo}"]`).checked;
 
     const body = {
-        nombre: leer('nombre'),
-        ip: leer('ip'),
-        puerto: parseInt(leer('puerto')) || 502,
-        marca: leer('marca'),
         horaApagado: leer('horaApagado'),
         activo: leerChk('activo')
     };
@@ -308,27 +237,11 @@ async function guardarCompresor(id, boton) {
     const msg = document.getElementById('msg-tabla');
     if (res.ok) {
         msg.className = 'msg ok';
-        msg.innerText = `Cambios guardados para "${body.nombre}".`;
+        msg.innerText = 'Cambios guardados.';
         cargarCompresores();
     } else {
         msg.className = 'msg error';
         msg.innerText = 'Error guardando los cambios.';
-    }
-}
-
-async function eliminarCompresor(id, nombre) {
-    if (!confirm(`¿Eliminar el compresor "${nombre}" y todo su historial/excepciones?`)) return;
-
-    const res = await fetch(`/api/compresores/${id}`, { method: 'DELETE' });
-    const msg = document.getElementById('msg-tabla');
-
-    if (res.ok) {
-        msg.className = 'msg ok';
-        msg.innerText = `Compresor "${nombre}" eliminado.`;
-        cargarCompresores();
-    } else {
-        msg.className = 'msg error';
-        msg.innerText = 'Error eliminando el compresor.';
     }
 }
 

@@ -932,20 +932,31 @@ app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
                 return res.status(500).send('Error');
             }
 
-            res.json(filas.map(f => ({
-                id: f.id,
-                nombre: f.nombre,
-                ip: f.ip,
-                puerto: f.puerto,
-                marca: f.marca,
-                horaApagado: f.hora_apagado,
-                activo: !!f.activo
-            })));
+            // La IP/puerto/marca del PLC solo se exponen al administrador:
+            // el resto de los usuarios únicamente programa horarios, así
+            // que ni siquiera reciben esos datos en la respuesta.
+            res.json(filas.map(f => {
+
+                const compresor = {
+                    id: f.id,
+                    nombre: f.nombre,
+                    horaApagado: f.hora_apagado,
+                    activo: !!f.activo
+                };
+
+                if (req.usuario.esAdmin) {
+                    compresor.ip = f.ip;
+                    compresor.puerto = f.puerto;
+                    compresor.marca = f.marca;
+                }
+
+                return compresor;
+            }));
         }
     );
 });
 
-app.post('/api/compresores', requierePermiso('compresores'), (req, res) => {
+app.post('/api/compresores', requiereAdmin, (req, res) => {
 
     const { nombre, ip, puerto, marca } = req.body;
 
@@ -1023,37 +1034,71 @@ app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
 app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
 
     const { nombre, ip, puerto, marca, horaApagado, activo } = req.body;
+    const id = req.params.id;
 
-    db.run(
-        `UPDATE compresores
-         SET nombre = ?, ip = ?, puerto = ?, marca = ?, hora_apagado = ?, activo = ?
-         WHERE id = ?`,
-        [
-            nombre,
-            ip || null,
-            puerto || 502,
-            marca || null,
-            horaApagado || null,
-            activo === false ? 0 : 1,
-            req.params.id
-        ],
-        err => {
+    // Solo el administrador puede tocar los datos de configuración del
+    // PLC (nombre, ip, puerto, marca). El resto de los usuarios con
+    // permiso de compresores únicamente puede programar el horario
+    // propio y activar/desactivar el compresor: aunque alguien mande
+    // esos campos igual a mano en la request, se ignoran.
+    if (req.usuario.esAdmin) {
 
-            if (err) {
-                console.error(err);
-                return res.status(500).send('Error');
+        db.run(
+            `UPDATE compresores
+             SET nombre = ?, ip = ?, puerto = ?, marca = ?, hora_apagado = ?, activo = ?
+             WHERE id = ?`,
+            [
+                nombre,
+                ip || null,
+                puerto || 502,
+                marca || null,
+                horaApagado || null,
+                activo === false ? 0 : 1,
+                id
+            ],
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
+                    ip, puerto, marca, horaApagado, activo
+                });
+
+                res.json({ status: 'ok' });
             }
+        );
 
-            registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
-                ip, puerto, marca, horaApagado, activo
-            });
+    } else {
 
-            res.json({ status: 'ok' });
-        }
-    );
+        db.get(`SELECT nombre FROM compresores WHERE id = ?`, [id], (errNombre, filaNombre) => {
+
+            const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${id}`;
+
+            db.run(
+                `UPDATE compresores SET hora_apagado = ?, activo = ? WHERE id = ?`,
+                [horaApagado || null, activo === false ? 0 : 1, id],
+                err => {
+
+                    if (err) {
+                        console.error(err);
+                        return res.status(500).send('Error');
+                    }
+
+                    registrarLog(req, 'compresores', `Editó el horario del compresor "${nombreCompresor}"`, {
+                        horaApagado, activo
+                    });
+
+                    res.json({ status: 'ok' });
+                }
+            );
+        });
+    }
 });
 
-app.delete('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
+app.delete('/api/compresores/:id', requiereAdmin, (req, res) => {
 
     db.get(`SELECT nombre FROM compresores WHERE id = ?`, [req.params.id], (errNombre, filaNombre) => {
 
