@@ -1052,7 +1052,7 @@ app.get('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
 
     db.all(
         `SELECT clave, valor FROM compresores_config
-         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global')`,
+         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global', 'modo_prueba')`,
         [],
         (err, filas) => {
 
@@ -1066,7 +1066,8 @@ app.get('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
 
             res.json({
                 horaApagadoGlobal: porClave.hora_apagado_global || null,
-                horaEncendidoGlobal: porClave.hora_encendido_global || null
+                horaEncendidoGlobal: porClave.hora_encendido_global || null,
+                modoPrueba: porClave.modo_prueba === '1'
             });
         }
     );
@@ -1074,38 +1075,76 @@ app.get('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
 
 app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) => {
 
-    const { horaApagadoGlobal, horaEncendidoGlobal } = req.body;
+    const { horaApagadoGlobal, horaEncendidoGlobal, modoPrueba } = req.body;
 
-    db.serialize(() => {
+    // Cada valor de config se guarda por separado, y solo se toca el que
+    // realmente vino en el pedido (si no vino, queda como estaba) — así
+    // guardar el modo prueba desde Administración no pisa con NULL el
+    // horario global que se guarda desde la pantalla de Compresores, y
+    // viceversa.
+    const tareas = [];
 
-        db.run(
+    if (horaApagadoGlobal !== undefined) {
+        tareas.push(next => db.run(
             `INSERT INTO compresores_config (clave, valor) VALUES ('hora_apagado_global', ?)
              ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
-            [horaApagadoGlobal || null]
-        );
+            [horaApagadoGlobal || null],
+            next
+        ));
+    }
 
-        db.run(
+    if (horaEncendidoGlobal !== undefined) {
+        tareas.push(next => db.run(
             `INSERT INTO compresores_config (clave, valor) VALUES ('hora_encendido_global', ?)
              ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
             [horaEncendidoGlobal || null],
-            err => {
+            next
+        ));
+    }
 
-                if (err) {
-                    console.error(err);
-                    return res.status(500).send('Error');
-                }
+    // El modo prueba saca el límite de "una vez por día" del programador
+    // automático. Es peligroso dejarlo prendido en producción (podría
+    // repetir encendido/apagado cada vez que el reloj vuelva a coincidir
+    // con el horario), así que solo el administrador lo puede tocar; si
+    // lo manda alguien sin ese permiso, se ignora en silencio.
+    if (modoPrueba !== undefined && req.usuario.esAdmin) {
+        tareas.push(next => db.run(
+            `INSERT INTO compresores_config (clave, valor) VALUES ('modo_prueba', ?)
+             ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
+            [modoPrueba ? '1' : '0'],
+            next
+        ));
+    }
 
-                registrarLog(
-                    req,
-                    'compresores',
-                    `Cambió el horario global (apagado "${horaApagadoGlobal || 'sin definir'}", ` +
-                    `encendido "${horaEncendidoGlobal || 'sin definir'}")`
-                );
+    let pendientes = tareas.length;
+    let huboError = false;
 
-                res.json({ status: 'ok' });
-            }
-        );
-    });
+    if (pendientes === 0) {
+        return res.json({ status: 'ok' });
+    }
+
+    tareas.forEach(tarea => tarea(err => {
+
+        if (err && !huboError) {
+            huboError = true;
+            console.error(err);
+            return res.status(500).send('Error');
+        }
+
+        pendientes--;
+
+        if (pendientes === 0 && !huboError) {
+
+            const detalles = [];
+            if (horaApagadoGlobal !== undefined) detalles.push(`apagado "${horaApagadoGlobal || 'sin definir'}"`);
+            if (horaEncendidoGlobal !== undefined) detalles.push(`encendido "${horaEncendidoGlobal || 'sin definir'}"`);
+            if (modoPrueba !== undefined && req.usuario.esAdmin) detalles.push(`modo prueba ${modoPrueba ? 'activado' : 'desactivado'}`);
+
+            registrarLog(req, 'compresores', `Cambió la configuración de compresores (${detalles.join(', ')})`);
+
+            res.json({ status: 'ok' });
+        }
+    }));
 });
 
 // ======================================================
@@ -1584,7 +1623,7 @@ setInterval(() => {
 
     db.all(
         `SELECT clave, valor FROM compresores_config
-         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global')`,
+         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global', 'modo_prueba')`,
         [],
         (err, filasGlobal) => {
 
@@ -1599,6 +1638,16 @@ setInterval(() => {
             const horaApagadoGlobal = globales.hora_apagado_global || null;
             const horaEncendidoGlobal = globales.hora_encendido_global || null;
 
+            // En modo prueba no se aplica el límite de "una vez por día":
+            // sirve para poder probar el horario varias veces seguidas sin
+            // esperar al día siguiente. Se activa/desactiva solo desde
+            // Administración (ver /api/compresores/config) y no debería
+            // quedar prendido en uso normal, porque si el reloj vuelve a
+            // coincidir con el mismo horario (por ejemplo al otro día,
+            // dado que el horario queda guardado) va a repetir la orden
+            // sin ningún límite.
+            const modoPrueba = globales.modo_prueba === '1';
+
             db.all(
                 `SELECT * FROM compresores WHERE activo = 1`,
                 [],
@@ -1611,8 +1660,8 @@ setInterval(() => {
 
                     compresores.forEach(c => {
 
-                        const faltaApagado = ultimoApagadoPorCompresor[c.id] !== hoy;
-                        const faltaEncendido = ultimoEncendidoPorCompresor[c.id] !== hoy;
+                        const faltaApagado = modoPrueba || ultimoApagadoPorCompresor[c.id] !== hoy;
+                        const faltaEncendido = modoPrueba || ultimoEncendidoPorCompresor[c.id] !== hoy;
 
                         if (!faltaApagado && !faltaEncendido) {
                             return;
@@ -1640,12 +1689,12 @@ setInterval(() => {
                                         : (c.hora_encendido || horaEncendidoGlobal);
 
                                 if (faltaApagado && apagadoObjetivo && horaActual === apagadoObjetivo) {
-                                    ultimoApagadoPorCompresor[c.id] = hoy;
+                                    if (!modoPrueba) ultimoApagadoPorCompresor[c.id] = hoy;
                                     ejecutarApagadoCompresor(c);
                                 }
 
                                 if (faltaEncendido && encendidoObjetivo && horaActual === encendidoObjetivo) {
-                                    ultimoEncendidoPorCompresor[c.id] = hoy;
+                                    if (!modoPrueba) ultimoEncendidoPorCompresor[c.id] = hoy;
                                     ejecutarEncendidoCompresor(c);
                                 }
                             }

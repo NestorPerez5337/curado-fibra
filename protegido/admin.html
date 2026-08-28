@@ -73,6 +73,23 @@
 </div>
 
 <div class="panel">
+    <h2>Modo prueba de compresores</h2>
+    <p style="font-size:13px; color:#aaa; margin-top:0;">
+        El programador automático normalmente solo actúa <strong>una vez por día</strong> por
+        compresor (para no repetir encendido/apagado sin parar). Activando esto, esa limitación se
+        saca — útil mientras estás probando y necesitás que dispare varias veces seguidas en el
+        mismo día. <strong>Acordate de desactivarlo</strong> cuando termines de probar: dejarlo
+        prendido en uso normal puede repetir la orden cada vez que el reloj coincida con el
+        horario guardado (por ejemplo, al día siguiente).
+    </p>
+    <div class="fila-form">
+        <label class="chk"><input type="checkbox" id="modo-prueba"> Modo prueba activado</label>
+        <button class="btn-guardar" onclick="guardarModoPrueba()">Guardar</button>
+    </div>
+    <div id="msg-modo-prueba" class="msg"></div>
+</div>
+
+<div class="panel">
     <h2>Agregar compresor</h2>
     <p style="font-size:13px; color:#aaa; margin-top:0;">
         La IP, puerto, marca y los coils Modbus solo se cargan y editan acá. El resto de los
@@ -333,6 +350,33 @@ async function eliminarUsuario(id, usuario) {
     cargarUsuarios();
 }
 
+async function cargarModoPrueba() {
+    const res = await fetch('/api/compresores/config');
+    if (!res.ok) return;
+
+    const data = await res.json();
+    document.getElementById('modo-prueba').checked = !!data.modoPrueba;
+}
+
+async function guardarModoPrueba() {
+    const modoPrueba = document.getElementById('modo-prueba').checked;
+    const msg = document.getElementById('msg-modo-prueba');
+
+    const res = await fetch('/api/compresores/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modoPrueba })
+    });
+
+    if (res.ok) {
+        msg.className = 'msg ok';
+        msg.innerText = modoPrueba ? 'Modo prueba activado.' : 'Modo prueba desactivado.';
+    } else {
+        msg.className = 'msg error';
+        msg.innerText = 'Error guardando el modo prueba.';
+    }
+}
+
 async function cargarCompresores() {
 
     const res = await fetch('/api/compresores');
@@ -534,6 +578,7 @@ async function crearBackup() {
 (async function init() {
     await cargarYo();
     await cargarUsuarios();
+    await cargarModoPrueba();
     await cargarCompresores();
     await cargarBackups();
 
