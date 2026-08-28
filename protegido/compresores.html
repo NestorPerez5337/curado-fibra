@@ -51,11 +51,15 @@
 <h1>Programación de Compresores</h1>
 
 <div class="panel">
-    <h2>Horario global de apagado (aplica a todos, salvo que tengan horario propio)</h2>
+    <h2>Horario global (aplica a todos, salvo que tengan horario propio)</h2>
     <div class="fila-form">
         <div>
             <label>Hora de apagado diaria</label>
-            <input type="time" id="hora-global">
+            <input type="time" id="hora-global-apagado">
+        </div>
+        <div>
+            <label>Hora de encendido diaria</label>
+            <input type="time" id="hora-global-encendido">
         </div>
         <button class="btn-guardar" onclick="guardarHoraGlobal()">Guardar horario global</button>
     </div>
@@ -72,7 +76,9 @@
         <thead>
             <tr>
                 <th>Nombre</th>
-                <th>Horario propio</th>
+                <th>Estado</th>
+                <th>Hora de apagado</th>
+                <th>Hora de encendido</th>
                 <th>Activo</th>
                 <th>Acciones</th>
             </tr>
@@ -85,8 +91,8 @@
 <div class="panel">
     <h2>Excepciones por calendario</h2>
     <p style="font-size:13px; color:#aaa;">
-        Elegí un compresor y hacé click en un día para programarle un horario de apagado distinto
-        solo para ese día (o dejarlo sin apagar ese día).
+        Elegí un compresor y hacé click en un día para programarle un horario de apagado y/o
+        encendido distinto solo para ese día (dejar vacío = no hacer esa acción ese día).
     </p>
 
     <div class="fila-form" style="margin-bottom:15px;">
@@ -111,6 +117,10 @@
             <div>
                 <label>Hora de apagado ese día (vacío = no apagar)</label>
                 <input type="time" id="exc-hora">
+            </div>
+            <div>
+                <label>Hora de encendido ese día (vacío = no encender)</label>
+                <input type="time" id="exc-hora-encendido">
             </div>
             <button class="btn-guardar" onclick="guardarExcepcion()">Guardar excepción</button>
             <button class="btn-eliminar" onclick="eliminarExcepcionSeleccionada()">Quitar excepción (volver al horario normal)</button>
@@ -150,16 +160,21 @@ async function cargarHoraGlobal() {
     const res = await fetch('/api/compresores/config');
     if (res.ok) {
         const data = await res.json();
-        document.getElementById('hora-global').value = data.horaApagadoGlobal || '';
+        document.getElementById('hora-global-apagado').value = data.horaApagadoGlobal || '';
+        document.getElementById('hora-global-encendido').value = data.horaEncendidoGlobal || '';
     }
 }
 
 async function guardarHoraGlobal() {
-    const hora = document.getElementById('hora-global').value;
+    const horaApagado = document.getElementById('hora-global-apagado').value;
+    const horaEncendido = document.getElementById('hora-global-encendido').value;
     const res = await fetch('/api/compresores/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ horaApagadoGlobal: hora || null })
+        body: JSON.stringify({
+            horaApagadoGlobal: horaApagado || null,
+            horaEncendidoGlobal: horaEncendido || null
+        })
     });
     const msg = document.getElementById('msg-global');
     if (res.ok) {
@@ -183,18 +198,41 @@ async function cargarCompresores() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>${c.nombre}</td>
+            <td id="estado-compresor-${c.id}">--</td>
             <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
+            <td><input type="time" data-campo="horaEncendido" value="${c.horaEncendido || ''}"></td>
             <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
             <td>
-                <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar</button>
-                <button class="btn-on" onclick="marcarEvento(${c.id}, 'encendido')">▶ Encendido</button>
-                <button class="btn-off" onclick="marcarEvento(${c.id}, 'apagado')">⏹ Apagado</button>
+                <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar horario</button>
+                <button class="btn-on" onclick="marcarEvento(${c.id}, 'encendido', this)">▶ Encender ahora</button>
+                <button class="btn-off" onclick="marcarEvento(${c.id}, 'apagado', this)">⏹ Apagar ahora</button>
             </td>
         `;
         tbody.appendChild(tr);
     });
 
     actualizarSelectCompresores();
+    actualizarEstadosCompresores();
+}
+
+async function actualizarEstadosCompresores() {
+    const res = await fetch('/api/compresores/estado');
+    if (!res.ok) return;
+
+    const estados = await res.json();
+
+    estados.forEach(e => {
+        const celda = document.getElementById(`estado-compresor-${e.id}`);
+        if (!celda) return;
+
+        if (!e.disponible) {
+            celda.innerHTML = '<span style="color:#888;">Sin datos</span>';
+        } else if (e.encendido) {
+            celda.innerHTML = '<span style="color:#28a745;">🟢 Encendido</span>';
+        } else {
+            celda.innerHTML = '<span style="color:#dc3545;">🔴 Apagado</span>';
+        }
+    });
 }
 
 function actualizarSelectCompresores() {
@@ -225,6 +263,7 @@ async function guardarCompresor(id, boton) {
 
     const body = {
         horaApagado: leer('horaApagado'),
+        horaEncendido: leer('horaEncendido'),
         activo: leerChk('activo')
     };
 
@@ -245,15 +284,31 @@ async function guardarCompresor(id, boton) {
     }
 }
 
-async function marcarEvento(id, tipo) {
-    await fetch(`/api/compresores/${id}/evento`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo })
-    });
+async function marcarEvento(id, tipo, boton) {
     const msg = document.getElementById('msg-tabla');
-    msg.className = 'msg ok';
-    msg.innerText = `Evento "${tipo}" registrado.`;
+
+    if (boton) boton.disabled = true;
+    msg.className = 'msg';
+    msg.innerText = `Enviando orden de ${tipo}...`;
+
+    try {
+        const res = await fetch(`/api/compresores/${id}/evento`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tipo })
+        });
+
+        if (res.ok) {
+            msg.className = 'msg ok';
+            msg.innerText = `Orden de "${tipo}" enviada correctamente.`;
+        } else {
+            const data = await res.json().catch(() => ({}));
+            msg.className = 'msg error';
+            msg.innerText = data.error || `No se pudo enviar la orden de "${tipo}".`;
+        }
+    } finally {
+        if (boton) boton.disabled = false;
+    }
 }
 
 // ============ CALENDARIO DE EXCEPCIONES ============
@@ -304,7 +359,7 @@ function dibujarCalendario() {
 
         const div = document.createElement('div');
         div.className = 'cal-dia' + (exc ? ' con-excepcion' : '') + (fechaStr === fechaSeleccionada ? ' seleccionado' : '');
-        div.innerHTML = `<span class="num">${dia}</span>${exc ? `<span class="marca">${exc.horaApagado || 'No apaga'}</span>` : ''}`;
+        div.innerHTML = `<span class="num">${dia}</span>${exc ? `<span class="marca">⏹ ${exc.horaApagado || '--'} / ▶ ${exc.horaEncendido || '--'}</span>` : ''}`;
         div.onclick = () => seleccionarDia(fechaStr, exc);
 
         grid.appendChild(div);
@@ -323,6 +378,7 @@ function seleccionarDia(fechaStr, exc) {
     document.getElementById('panel-excepcion').style.display = 'block';
     document.getElementById('exc-fecha-titulo').innerText = `Excepción para el ${fechaStr}`;
     document.getElementById('exc-hora').value = exc ? (exc.horaApagado || '') : '';
+    document.getElementById('exc-hora-encendido').value = exc ? (exc.horaEncendido || '') : '';
     document.getElementById('msg-excepcion').innerText = '';
 
     dibujarCalendario();
@@ -331,6 +387,7 @@ function seleccionarDia(fechaStr, exc) {
 async function guardarExcepcion() {
     const compresorId = document.getElementById('cal-compresor').value;
     const hora = document.getElementById('exc-hora').value;
+    const horaEncendido = document.getElementById('exc-hora-encendido').value;
     const msg = document.getElementById('msg-excepcion');
 
     if (!fechaSeleccionada || !compresorId) return;
@@ -338,7 +395,12 @@ async function guardarExcepcion() {
     const res = await fetch('/api/compresores/excepciones', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ compresorId, fecha: fechaSeleccionada, horaApagado: hora || null })
+        body: JSON.stringify({
+            compresorId,
+            fecha: fechaSeleccionada,
+            horaApagado: hora || null,
+            horaEncendido: horaEncendido || null
+        })
     });
 
     if (res.ok) {
@@ -368,6 +430,7 @@ async function eliminarExcepcionSeleccionada() {
         msg.className = 'msg ok';
         msg.innerText = 'Excepción eliminada, ese día vuelve al horario normal.';
         document.getElementById('exc-hora').value = '';
+        document.getElementById('exc-hora-encendido').value = '';
         cargarExcepcionesMes();
     } else {
         msg.className = 'msg error';
@@ -378,6 +441,10 @@ async function eliminarExcepcionSeleccionada() {
 (async function init() {
     await cargarHoraGlobal();
     await cargarCompresores();
+
+    // Refresca solo el estado en vivo (sin recargar toda la tabla, para
+    // no perder lo que se esté editando) cada 15 segundos.
+    setInterval(actualizarEstadosCompresores, 15 * 1000);
 })();
 
 </script>

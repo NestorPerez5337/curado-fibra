@@ -256,10 +256,47 @@ db.serialize(() => {
             puerto INTEGER DEFAULT 502,
             marca TEXT,
             hora_apagado TEXT,
+            hora_encendido TEXT,
+            coil_marcha INTEGER,
+            coil_estado INTEGER,
             activo INTEGER NOT NULL DEFAULT 1,
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `);
+
+    // Migración: agregar a compresores las columnas de encendido programado,
+    // dirección del coil Modbus de comando (marcha/paro) y dirección del
+    // coil de estado (lectura del contacto de "marcha" real del compresor,
+    // para mostrar en pantalla si está encendido) si la tabla ya existía
+    // de una versión anterior sin ellas.
+    db.all(`PRAGMA table_info(compresores)`, [], (err, columnas) => {
+
+        if (err) {
+            console.error('Error leyendo esquema de compresores:', err);
+            return;
+        }
+
+        if (!columnas.some(c => c.name === 'hora_encendido')) {
+            db.run(`ALTER TABLE compresores ADD COLUMN hora_encendido TEXT`, err2 => {
+                if (err2) console.error('Error migrando columna hora_encendido:', err2);
+                else console.log('Columna hora_encendido agregada a compresores.');
+            });
+        }
+
+        if (!columnas.some(c => c.name === 'coil_marcha')) {
+            db.run(`ALTER TABLE compresores ADD COLUMN coil_marcha INTEGER`, err2 => {
+                if (err2) console.error('Error migrando columna coil_marcha:', err2);
+                else console.log('Columna coil_marcha agregada a compresores.');
+            });
+        }
+
+        if (!columnas.some(c => c.name === 'coil_estado')) {
+            db.run(`ALTER TABLE compresores ADD COLUMN coil_estado INTEGER`, err2 => {
+                if (err2) console.error('Error migrando columna coil_estado:', err2);
+                else console.log('Columna coil_estado agregada a compresores.');
+            });
+        }
+    });
 
     db.run(`
         CREATE TABLE IF NOT EXISTS compresores_config (
@@ -274,9 +311,27 @@ db.serialize(() => {
             compresor_id INTEGER NOT NULL,
             fecha TEXT NOT NULL,
             hora_apagado TEXT,
+            hora_encendido TEXT,
             UNIQUE(compresor_id, fecha)
         )
     `);
+
+    // Migración: agregar hora_encendido a las excepciones de calendario
+    // si la tabla ya existía de una versión anterior sin esa columna.
+    db.all(`PRAGMA table_info(compresores_excepciones)`, [], (err, columnas) => {
+
+        if (err) {
+            console.error('Error leyendo esquema de compresores_excepciones:', err);
+            return;
+        }
+
+        if (!columnas.some(c => c.name === 'hora_encendido')) {
+            db.run(`ALTER TABLE compresores_excepciones ADD COLUMN hora_encendido TEXT`, err2 => {
+                if (err2) console.error('Error migrando columna hora_encendido en excepciones:', err2);
+                else console.log('Columna hora_encendido agregada a compresores_excepciones.');
+            });
+        }
+    });
 
     db.run(`
         CREATE TABLE IF NOT EXISTS compresores_eventos (
@@ -941,6 +996,7 @@ app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
                     id: f.id,
                     nombre: f.nombre,
                     horaApagado: f.hora_apagado,
+                    horaEncendido: f.hora_encendido,
                     activo: !!f.activo
                 };
 
@@ -948,6 +1004,8 @@ app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
                     compresor.ip = f.ip;
                     compresor.puerto = f.puerto;
                     compresor.marca = f.marca;
+                    compresor.coilMarcha = f.coil_marcha;
+                    compresor.coilEstado = f.coil_estado;
                 }
 
                 return compresor;
@@ -958,16 +1016,18 @@ app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
 
 app.post('/api/compresores', requiereAdmin, (req, res) => {
 
-    const { nombre, ip, puerto, marca } = req.body;
+    const { nombre, ip, puerto, marca, coilMarcha, coilEstado } = req.body;
 
     if (!nombre) {
         return res.status(400).send('El nombre es obligatorio');
     }
 
+    const aEntero = v => (v === '' || v == null ? null : parseInt(v));
+
     db.run(
-        `INSERT INTO compresores (nombre, ip, puerto, marca)
-         VALUES (?, ?, ?, ?)`,
-        [nombre, ip || null, puerto || 502, marca || null],
+        `INSERT INTO compresores (nombre, ip, puerto, marca, coil_marcha, coil_estado)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [nombre, ip || null, puerto || 502, marca || null, aEntero(coilMarcha), aEntero(coilEstado)],
         function (err) {
 
             if (err) {
@@ -975,7 +1035,7 @@ app.post('/api/compresores', requiereAdmin, (req, res) => {
                 return res.status(500).send('Error');
             }
 
-            registrarLog(req, 'compresores', `Creó el compresor "${nombre}"`, { ip, puerto, marca });
+            registrarLog(req, 'compresores', `Creó el compresor "${nombre}"`, { ip, puerto, marca, coilMarcha, coilEstado });
 
             res.json({ status: 'ok', id: this.lastID });
         }
@@ -990,69 +1050,126 @@ app.post('/api/compresores', requiereAdmin, (req, res) => {
 
 app.get('/api/compresores/config', requierePermiso('compresores'), (req, res) => {
 
-    db.get(
-        `SELECT valor FROM compresores_config WHERE clave = 'hora_apagado_global'`,
+    db.all(
+        `SELECT clave, valor FROM compresores_config
+         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global')`,
         [],
-        (err, fila) => {
+        (err, filas) => {
 
             if (err) {
                 console.error(err);
                 return res.status(500).send('Error');
             }
 
-            res.json({ horaApagadoGlobal: fila ? fila.valor : null });
+            const porClave = {};
+            filas.forEach(f => { porClave[f.clave] = f.valor; });
+
+            res.json({
+                horaApagadoGlobal: porClave.hora_apagado_global || null,
+                horaEncendidoGlobal: porClave.hora_encendido_global || null
+            });
         }
     );
 });
 
 app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) => {
 
-    const { horaApagadoGlobal } = req.body;
+    const { horaApagadoGlobal, horaEncendidoGlobal } = req.body;
 
-    db.run(
-        `INSERT INTO compresores_config (clave, valor) VALUES ('hora_apagado_global', ?)
-         ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
-        [horaApagadoGlobal || null],
-        err => {
+    db.serialize(() => {
 
-            if (err) {
-                console.error(err);
-                return res.status(500).send('Error');
+        db.run(
+            `INSERT INTO compresores_config (clave, valor) VALUES ('hora_apagado_global', ?)
+             ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
+            [horaApagadoGlobal || null]
+        );
+
+        db.run(
+            `INSERT INTO compresores_config (clave, valor) VALUES ('hora_encendido_global', ?)
+             ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
+            [horaEncendidoGlobal || null],
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                registrarLog(
+                    req,
+                    'compresores',
+                    `Cambió el horario global (apagado "${horaApagadoGlobal || 'sin definir'}", ` +
+                    `encendido "${horaEncendidoGlobal || 'sin definir'}")`
+                );
+
+                res.json({ status: 'ok' });
             }
+        );
+    });
+});
 
-            registrarLog(
-                req,
-                'compresores',
-                `Cambió el horario global de apagado a "${horaApagadoGlobal || 'sin definir'}"`
-            );
+// ======================================================
+// COMPRESORES: ESTADO EN VIVO (¿está encendido ahora?)
+// ======================================================
+// Lee el contacto de "marcha" real de cada compresor (no lo que le
+// ordenamos, sino lo que el compresor informa). Es aparte del resto del
+// CRUD para que la pantalla lo pueda pedir sola, cada tantos segundos,
+// sin frenar la carga del resto de la página si el PLC de algún
+// compresor está lento o desconectado.
+app.get('/api/compresores/estado', requierePermiso('compresores'), (req, res) => {
 
-            res.json({ status: 'ok' });
+    db.all(`SELECT * FROM compresores`, [], async (err, filas) => {
+
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error');
         }
-    );
+
+        const estados = await Promise.all(filas.map(async f => {
+
+            const resultado = await leerEstadoCompresor(f);
+
+            return {
+                id: f.id,
+                disponible: resultado.disponible,
+                encendido: resultado.disponible ? resultado.encendido : null
+            };
+        }));
+
+        res.json(estados);
+    });
 });
 
 app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
 
-    const { nombre, ip, puerto, marca, horaApagado, activo } = req.body;
+    const { nombre, ip, puerto, marca, coilMarcha, coilEstado, horaApagado, horaEncendido, activo } = req.body;
     const id = req.params.id;
 
     // Solo el administrador puede tocar los datos de configuración del
-    // PLC (nombre, ip, puerto, marca). El resto de los usuarios con
-    // permiso de compresores únicamente puede programar el horario
-    // propio y activar/desactivar el compresor: aunque alguien mande
-    // esos campos igual a mano en la request, se ignoran.
-    if (req.usuario.esAdmin) {
+    // PLC (nombre, ip, puerto, marca, coils), y solo cuando los manda de
+    // verdad (formulario de Administración): el resto de los usuarios con
+    // permiso de compresores, e incluso un admin editando desde la
+    // pantalla de Compresores, únicamente programan los horarios propios
+    // y activan/desactivan el compresor, sin tocar esos campos de
+    // configuración (si no vienen en el body, no se pisan).
+    if (req.usuario.esAdmin && nombre !== undefined) {
+
+        const aEntero = v => (v === '' || v == null ? null : parseInt(v));
 
         db.run(
             `UPDATE compresores
-             SET nombre = ?, ip = ?, puerto = ?, marca = ?, hora_apagado = ?, activo = ?
+             SET nombre = ?, ip = ?, puerto = ?, marca = ?, coil_marcha = ?, coil_estado = ?,
+                 hora_apagado = ?, hora_encendido = ?, activo = ?
              WHERE id = ?`,
             [
                 nombre,
                 ip || null,
                 puerto || 502,
                 marca || null,
+                aEntero(coilMarcha),
+                aEntero(coilEstado),
                 horaApagado || null,
+                horaEncendido || null,
                 activo === false ? 0 : 1,
                 id
             ],
@@ -1064,7 +1181,7 @@ app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
                 }
 
                 registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
-                    ip, puerto, marca, horaApagado, activo
+                    ip, puerto, marca, coilMarcha, coilEstado, horaApagado, horaEncendido, activo
                 });
 
                 res.json({ status: 'ok' });
@@ -1078,8 +1195,8 @@ app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
             const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${id}`;
 
             db.run(
-                `UPDATE compresores SET hora_apagado = ?, activo = ? WHERE id = ?`,
-                [horaApagado || null, activo === false ? 0 : 1, id],
+                `UPDATE compresores SET hora_apagado = ?, hora_encendido = ?, activo = ? WHERE id = ?`,
+                [horaApagado || null, horaEncendido || null, activo === false ? 0 : 1, id],
                 err => {
 
                     if (err) {
@@ -1088,7 +1205,7 @@ app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
                     }
 
                     registrarLog(req, 'compresores', `Editó el horario del compresor "${nombreCompresor}"`, {
-                        horaApagado, activo
+                        horaApagado, horaEncendido, activo
                     });
 
                     res.json({ status: 'ok' });
@@ -1125,9 +1242,10 @@ app.delete('/api/compresores/:id', requiereAdmin, (req, res) => {
     });
 });
 
-// Marcar manualmente un encendido/apagado (útil mientras no hay
-// monitoreo automático por PLC para algún compresor)
-app.post('/api/compresores/:id/evento', requierePermiso('compresores'), (req, res) => {
+// Botón manual de Encendido/Apagado: manda la orden real por Modbus al
+// PLC del compresor (a través del relé auxiliar cableado en el borne de
+// marcha/paro) y, si se pudo mandar, registra el evento en el historial.
+app.post('/api/compresores/:id/evento', requierePermiso('compresores'), async (req, res) => {
 
     const { tipo } = req.body;
 
@@ -1135,27 +1253,44 @@ app.post('/api/compresores/:id/evento', requierePermiso('compresores'), (req, re
         return res.status(400).send('Tipo inválido');
     }
 
-    db.run(
-        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
-         VALUES (?, ?, 'manual')`,
-        [req.params.id, tipo],
-        err => {
+    db.get(`SELECT * FROM compresores WHERE id = ?`, [req.params.id], async (errCompresor, compresor) => {
 
-            if (err) {
-                console.error(err);
-                return res.status(500).send('Error');
-            }
-
-            db.get(`SELECT nombre FROM compresores WHERE id = ?`, [req.params.id], (errNombre, filaNombre) => {
-
-                const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${req.params.id}`;
-
-                registrarLog(req, 'compresores', `Marcó "${tipo}" manualmente en el compresor "${nombreCompresor}"`);
-            });
-
-            res.json({ status: 'ok' });
+        if (errCompresor) {
+            console.error(errCompresor);
+            return res.status(500).send('Error');
         }
-    );
+
+        if (!compresor) {
+            return res.status(404).send('Compresor no encontrado');
+        }
+
+        const resultado = await escribirOrdenCompresor(compresor, tipo === 'encendido');
+
+        if (!resultado.ok) {
+            return res.status(502).json({
+                error: resultado.motivo === 'sin_configurar'
+                    ? 'Este compresor todavía no tiene IP/coil configurados por el administrador.'
+                    : 'No se pudo comunicar con el PLC del compresor.'
+            });
+        }
+
+        db.run(
+            `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
+             VALUES (?, ?, 'manual')`,
+            [compresor.id, tipo],
+            err => {
+
+                if (err) {
+                    console.error(err);
+                    return res.status(500).send('Error');
+                }
+
+                registrarLog(req, 'compresores', `Comandó "${tipo}" manualmente en el compresor "${compresor.nombre}"`);
+
+                res.json({ status: 'ok' });
+            }
+        );
+    });
 });
 
 // ======================================================
@@ -1187,24 +1322,27 @@ app.get('/api/compresores/excepciones', requierePermiso('compresores'), (req, re
             id: f.id,
             compresorId: f.compresor_id,
             fecha: f.fecha,
-            horaApagado: f.hora_apagado
+            horaApagado: f.hora_apagado,
+            horaEncendido: f.hora_encendido
         })));
     });
 });
 
 app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, res) => {
 
-    const { compresorId, fecha, horaApagado } = req.body;
+    const { compresorId, fecha, horaApagado, horaEncendido } = req.body;
 
     if (!compresorId || !fecha) {
         return res.status(400).send('Falta compresor o fecha');
     }
 
     db.run(
-        `INSERT INTO compresores_excepciones (compresor_id, fecha, hora_apagado)
-         VALUES (?, ?, ?)
-         ON CONFLICT(compresor_id, fecha) DO UPDATE SET hora_apagado = excluded.hora_apagado`,
-        [compresorId, fecha, horaApagado || null],
+        `INSERT INTO compresores_excepciones (compresor_id, fecha, hora_apagado, hora_encendido)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(compresor_id, fecha) DO UPDATE SET
+            hora_apagado = excluded.hora_apagado,
+            hora_encendido = excluded.hora_encendido`,
+        [compresorId, fecha, horaApagado || null, horaEncendido || null],
         function (err) {
 
             if (err) {
@@ -1220,7 +1358,8 @@ app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, r
                     req,
                     'compresores',
                     `Programó una excepción de calendario para "${nombreCompresor}" el ${fecha} ` +
-                    `(${horaApagado ? 'apaga a las ' + horaApagado : 'no apaga ese día'})`
+                    `(${horaApagado ? 'apaga a las ' + horaApagado : 'no apaga ese día'}, ` +
+                    `${horaEncendido ? 'enciende a las ' + horaEncendido : 'no enciende ese día'})`
                 );
             });
 
@@ -1315,33 +1454,121 @@ app.get('/api/compresores/eventos', requierePermiso('compresores'), (req, res) =
 });
 
 // ======================================================
-// COMPRESORES: PROGRAMADOR DE APAGADO AUTOMÁTICO
+// COMPRESORES: ORDEN REAL POR MODBUS (marcha/paro)
+// ======================================================
+// El compresor NO habla Modbus directamente: lo que hay cableado en su
+// borne de marcha/paro es el contacto seco de un relé auxiliar, y ese
+// relé lo comanda un coil del PLC (contacto cerrado = marcha, abierto =
+// parada). "ip"/"puerto" son los del PLC que tiene ese coil, y
+// "coil_marcha" es la dirección de ese coil — los tres los carga el
+// administrador. Mientras algún compresor no los tenga cargados, la
+// orden queda registrada como "no se pudo enviar" en vez de fallar en
+// silencio.
+async function escribirOrdenCompresor(compresor, encender) {
+
+    if (!compresor.ip || compresor.coil_marcha === null || compresor.coil_marcha === undefined) {
+
+        console.log(
+            `⚠️ Compresor "${compresor.nombre}": falta IP o coil de marcha configurado por el ` +
+            `administrador, no se pudo enviar la orden de ${encender ? 'encendido' : 'apagado'}.`
+        );
+
+        return { ok: false, motivo: 'sin_configurar' };
+    }
+
+    let socket = null;
+
+    try {
+
+        const conexion = await crearClienteModbus(compresor.ip, compresor.puerto || 502);
+
+        socket = conexion.socket;
+
+        await conexion.client.writeSingleCoil(compresor.coil_marcha, encender);
+
+        console.log(
+            `Compresor "${compresor.nombre}": orden de ${encender ? 'encendido' : 'apagado'} ` +
+            `enviada por Modbus (coil ${compresor.coil_marcha} en ${compresor.ip}:${compresor.puerto || 502}).`
+        );
+
+        return { ok: true };
+
+    } catch (err) {
+
+        console.error(
+            `Error enviando orden de ${encender ? 'encendido' : 'apagado'} al compresor "${compresor.nombre}":`,
+            err.message
+        );
+
+        return { ok: false, motivo: 'error_modbus', error: err.message };
+
+    } finally {
+
+        if (socket) socket.destroy();
+    }
+}
+
+// Lee el estado real del compresor (no lo que le ordenamos, sino lo que
+// el propio compresor informa que está haciendo) a través del contacto
+// seco de "marcha" que ya identificamos en cada tablero (por ejemplo,
+// X117 100-101 en el Atlas Copco o J1 4-5 en el Sullair), cableado a un
+// coil del PLC aparte del que usamos para comandar. Se usa solo para
+// mostrar en pantalla, nunca para decidir si mandar una orden.
+async function leerEstadoCompresor(compresor) {
+
+    if (!compresor.ip || compresor.coil_estado === null || compresor.coil_estado === undefined) {
+        return { disponible: false };
+    }
+
+    let socket = null;
+
+    try {
+
+        const conexion = await crearClienteModbus(compresor.ip, compresor.puerto || 502);
+
+        socket = conexion.socket;
+
+        const respuesta = await conexion.client.readCoils(compresor.coil_estado, 1);
+
+        return { disponible: true, encendido: !!respuesta.response.body.values[0] };
+
+    } catch (err) {
+
+        console.error(`Error leyendo el estado del compresor "${compresor.nombre}":`, err.message);
+
+        return { disponible: false };
+
+    } finally {
+
+        if (socket) socket.destroy();
+    }
+}
+
+// ======================================================
+// COMPRESORES: PROGRAMADOR AUTOMÁTICO (apagado y encendido)
 // ======================================================
 
 const ultimoApagadoPorCompresor = {};
+const ultimoEncendidoPorCompresor = {};
 
 async function ejecutarApagadoCompresor(compresor) {
 
-    if (compresor.ip) {
-
-        // TODO: cuando tengamos la marca/mapeo Modbus de cada PLC de
-        // compresor, reemplazar este bloque por la escritura real
-        // (por ejemplo client.writeSingleCoil(direccion, 0)).
-        console.log(
-            `⚠️ Compresor "${compresor.nombre}" (${compresor.ip}): horario de apagado cumplido, ` +
-            `pero todavía no está configurado el mapeo Modbus real (queda pendiente cablear la orden).`
-        );
-
-    } else {
-
-        console.log(
-            `⚠️ Compresor "${compresor.nombre}": horario de apagado cumplido, pero todavía no tiene PLC/IP configurado.`
-        );
-    }
+    await escribirOrdenCompresor(compresor, false);
 
     db.run(
         `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
          VALUES (?, 'apagado', 'programado')`,
+        [compresor.id]
+    );
+}
+
+async function ejecutarEncendidoCompresor(compresor) {
+
+    await escribirOrdenCompresor(compresor, true);
+
+    db.run(
+        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
+         VALUES (?, 'encendido', 'programado')`,
         [compresor.id]
     );
 }
@@ -1355,17 +1582,22 @@ setInterval(() => {
         String(ahora.getHours()).padStart(2, '0') + ':' +
         String(ahora.getMinutes()).padStart(2, '0');
 
-    db.get(
-        `SELECT valor FROM compresores_config WHERE clave = 'hora_apagado_global'`,
+    db.all(
+        `SELECT clave, valor FROM compresores_config
+         WHERE clave IN ('hora_apagado_global', 'hora_encendido_global')`,
         [],
-        (err, filaGlobal) => {
+        (err, filasGlobal) => {
 
             if (err) {
                 console.error('Error leyendo horario global de compresores:', err);
                 return;
             }
 
-            const horaGlobal = filaGlobal ? filaGlobal.valor : null;
+            const globales = {};
+            filasGlobal.forEach(f => { globales[f.clave] = f.valor; });
+
+            const horaApagadoGlobal = globales.hora_apagado_global || null;
+            const horaEncendidoGlobal = globales.hora_encendido_global || null;
 
             db.all(
                 `SELECT * FROM compresores WHERE activo = 1`,
@@ -1379,12 +1611,15 @@ setInterval(() => {
 
                     compresores.forEach(c => {
 
-                        if (ultimoApagadoPorCompresor[c.id] === hoy) {
+                        const faltaApagado = ultimoApagadoPorCompresor[c.id] !== hoy;
+                        const faltaEncendido = ultimoEncendidoPorCompresor[c.id] !== hoy;
+
+                        if (!faltaApagado && !faltaEncendido) {
                             return;
                         }
 
                         db.get(
-                            `SELECT hora_apagado FROM compresores_excepciones
+                            `SELECT hora_apagado, hora_encendido FROM compresores_excepciones
                              WHERE compresor_id = ? AND fecha = ?`,
                             [c.id, hoy],
                             (err3, excepcion) => {
@@ -1394,16 +1629,24 @@ setInterval(() => {
                                     return;
                                 }
 
-                                const horaObjetivo =
+                                const apagadoObjetivo =
                                     excepcion
                                         ? excepcion.hora_apagado
-                                        : (c.hora_apagado || horaGlobal);
+                                        : (c.hora_apagado || horaApagadoGlobal);
 
-                                if (horaObjetivo && horaActual === horaObjetivo) {
+                                const encendidoObjetivo =
+                                    excepcion
+                                        ? excepcion.hora_encendido
+                                        : (c.hora_encendido || horaEncendidoGlobal);
 
+                                if (faltaApagado && apagadoObjetivo && horaActual === apagadoObjetivo) {
                                     ultimoApagadoPorCompresor[c.id] = hoy;
-
                                     ejecutarApagadoCompresor(c);
+                                }
+
+                                if (faltaEncendido && encendidoObjetivo && horaActual === encendidoObjetivo) {
+                                    ultimoEncendidoPorCompresor[c.id] = hoy;
+                                    ejecutarEncendidoCompresor(c);
                                 }
                             }
                         );

@@ -75,8 +75,13 @@
 <div class="panel">
     <h2>Agregar compresor</h2>
     <p style="font-size:13px; color:#aaa; margin-top:0;">
-        La IP, puerto y marca del PLC solo se cargan y editan acá. El resto de los usuarios con
-        permiso de Compresores solo ve el nombre y programa el horario, nunca estos datos.
+        La IP, puerto, marca y los coils Modbus solo se cargan y editan acá. El resto de los
+        usuarios con permiso de Compresores solo ve el nombre y programa el horario, nunca estos
+        datos. El compresor no habla Modbus directo: la IP/puerto son los del PLC que tiene
+        cableado el relé de marcha/paro del compresor. "Coil de marcha" es la dirección que el
+        sistema ESCRIBE para comandarlo (1 = orden de marcha, 0 = orden de parada); "coil de
+        estado" es una dirección aparte que el sistema solo LEE, cableada al contacto de "marcha"
+        real del compresor, para saber si está efectivamente encendido.
     </p>
     <div class="fila-form">
         <div>
@@ -95,6 +100,14 @@
             <label>Marca del PLC (opcional por ahora)</label>
             <input type="text" id="nc-marca" placeholder="Se carga después">
         </div>
+        <div>
+            <label>Coil de marcha (opcional por ahora)</label>
+            <input type="number" id="nc-coil" placeholder="Ej: 10" class="mini">
+        </div>
+        <div>
+            <label>Coil de estado (opcional por ahora)</label>
+            <input type="number" id="nc-coil-estado" placeholder="Ej: 11" class="mini">
+        </div>
         <button class="btn-crear" onclick="crearCompresor()">Agregar compresor</button>
     </div>
     <div id="msg-crear-compresor" class="msg"></div>
@@ -109,7 +122,11 @@
                 <th>IP</th>
                 <th>Puerto</th>
                 <th>Marca</th>
-                <th>Horario propio</th>
+                <th>Coil marcha</th>
+                <th>Coil estado</th>
+                <th>Estado</th>
+                <th>Hora de apagado</th>
+                <th>Hora de encendido</th>
                 <th>Activo</th>
                 <th>Acciones</th>
             </tr>
@@ -326,7 +343,7 @@ async function cargarCompresores() {
     tbody.innerHTML = '';
 
     if (compresores.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">Todavía no hay compresores cargados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#888;">Todavía no hay compresores cargados.</td></tr>';
         return;
     }
 
@@ -337,7 +354,11 @@ async function cargarCompresores() {
             <td><input type="text" class="mini" style="width:110px;" data-campo="ip" value="${c.ip || ''}" placeholder="(sin definir)"></td>
             <td><input type="number" class="mini" style="width:70px;" data-campo="puerto" value="${c.puerto || 502}"></td>
             <td><input type="text" class="mini" style="width:90px;" data-campo="marca" value="${c.marca || ''}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="coilMarcha" value="${c.coilMarcha ?? ''}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="coilEstado" value="${c.coilEstado ?? ''}" placeholder="(sin definir)"></td>
+            <td id="estado-compresor-${c.id}">--</td>
             <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
+            <td><input type="time" data-campo="horaEncendido" value="${c.horaEncendido || ''}"></td>
             <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
             <td>
                 <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar</button>
@@ -345,6 +366,28 @@ async function cargarCompresores() {
             </td>
         `;
         tbody.appendChild(tr);
+    });
+
+    actualizarEstadosCompresores();
+}
+
+async function actualizarEstadosCompresores() {
+    const res = await fetch('/api/compresores/estado');
+    if (!res.ok) return;
+
+    const estados = await res.json();
+
+    estados.forEach(e => {
+        const celda = document.getElementById(`estado-compresor-${e.id}`);
+        if (!celda) return;
+
+        if (!e.disponible) {
+            celda.innerHTML = '<span style="color:#888;">Sin datos</span>';
+        } else if (e.encendido) {
+            celda.innerHTML = '<span style="color:#28a745;">🟢 Encendido</span>';
+        } else {
+            celda.innerHTML = '<span style="color:#dc3545;">🔴 Apagado</span>';
+        }
     });
 }
 
@@ -362,7 +405,9 @@ async function crearCompresor() {
         nombre,
         ip: document.getElementById('nc-ip').value.trim(),
         puerto: parseInt(document.getElementById('nc-puerto').value) || 502,
-        marca: document.getElementById('nc-marca').value.trim()
+        marca: document.getElementById('nc-marca').value.trim(),
+        coilMarcha: document.getElementById('nc-coil').value.trim(),
+        coilEstado: document.getElementById('nc-coil-estado').value.trim()
     };
 
     const res = await fetch('/api/compresores', {
@@ -384,6 +429,8 @@ async function crearCompresor() {
     document.getElementById('nc-ip').value = '';
     document.getElementById('nc-marca').value = '';
     document.getElementById('nc-puerto').value = 502;
+    document.getElementById('nc-coil').value = '';
+    document.getElementById('nc-coil-estado').value = '';
 
     cargarCompresores();
 }
@@ -398,7 +445,10 @@ async function guardarCompresor(id, boton) {
         ip: leer('ip'),
         puerto: parseInt(leer('puerto')) || 502,
         marca: leer('marca'),
+        coilMarcha: leer('coilMarcha'),
+        coilEstado: leer('coilEstado'),
         horaApagado: leer('horaApagado'),
+        horaEncendido: leer('horaEncendido'),
         activo: leerChk('activo')
     };
 
@@ -486,6 +536,10 @@ async function crearBackup() {
     await cargarUsuarios();
     await cargarCompresores();
     await cargarBackups();
+
+    // Refresca solo el estado en vivo (sin recargar toda la tabla, para
+    // no perder lo que se esté editando) cada 15 segundos.
+    setInterval(actualizarEstadosCompresores, 15 * 1000);
 })();
 
 </script>
