@@ -1394,6 +1394,16 @@ app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, r
         return res.status(400).send('Falta compresor o fecha');
     }
 
+    // La pantalla ya evita mandar esto, pero lo validamos también acá:
+    // una excepción con las dos horas vacías crea una fila "fantasma" que
+    // el programador automático interpreta como "hay excepción" (aunque
+    // sus horarios sean null) y anula el horario propio/global de ese
+    // compresor ese día sin ningún aviso. Cualquiera que llame a esta API
+    // directo (no solo el botón de la pantalla) tiene que respetar esto.
+    if (!horaApagado && !horaEncendido) {
+        return res.status(400).send('Hay que cargar al menos un horario (apagado o encendido)');
+    }
+
     db.run(
         `INSERT INTO compresores_excepciones (compresor_id, fecha, hora_apagado, hora_encendido)
          VALUES (?, ?, ?, ?)
@@ -1912,6 +1922,11 @@ app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) =
 
         console.log(`🚀 Iniciando seteo masivo total: Escribiendo receta en Canal 1 y Canal 2 de las 6 máquinas...`);
 
+        // Máquinas en las que falló la escritura, para poder avisarle al
+        // operador cuáles quedaron con la receta vieja en vez de reportar
+        // éxito total aunque alguna (o todas) hayan fallado.
+        const fallos = [];
+
         // Recorremos los 6 PLCs declarados en tu CONFIG_PLCS
         for (let dev = 1; dev <= 6; dev++) {
             const config = CONFIG_PLCS[dev];
@@ -1949,13 +1964,27 @@ app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) =
             } catch (errPlc) {
                 // Si una máquina falla o está apagada, reporta el error pero sigue con las otras
                 console.error(`❌ Error al escribir en el PLC DEV ${dev} (${config.ip}):`, errPlc.message);
+                fallos.push(dev);
                 if (socket) socket.destroy();
             }
         }
 
-        registrarLog(req, 'devanadoras', 'Seteó una receta en TODAS las máquinas (canal 1 y 2, las 6)', valores);
+        if (fallos.length > 0) {
+            registrarLog(
+                req,
+                'devanadoras',
+                `Seteó una receta masiva con fallas en las máquinas ${fallos.join(', ')} de 6`,
+                valores
+            );
+        } else {
+            registrarLog(req, 'devanadoras', 'Seteó una receta en TODAS las máquinas (canal 1 y 2, las 6)', valores);
+        }
 
-        res.json({ status: 'ok' });
+        // Siempre respondemos 200 (la operación en sí no reventó), pero
+        // incluimos qué máquinas fallaron para que el frontend no muestre
+        // "éxito total" cuando en realidad alguna se quedó con la receta
+        // vieja.
+        res.json({ status: fallos.length > 0 ? 'parcial' : 'ok', fallos });
 
     } catch (e) {
         console.error("Error general en el proceso masivo total:", e);
@@ -2105,6 +2134,14 @@ let lecturaEnCurso = false;
 // Al apagarse la variable del PLC, seguimos tomando muestras
 // durante este tiempo extra antes de cerrar el ensayo y generar el PDF.
 const GRACIA_FIN_ENSAYO_MS = 2000;
+
+// Tope de seguridad: si la variable M12 del PLC queda pegada en ON (falla
+// de cableado, corte de comunicación, bug del programa del PLC) sin este
+// límite el ensayo seguiría tomando muestras para siempre, creciendo sin
+// cota en memoria y generando un PDF con un gráfico imposible de renderizar.
+// A 1 muestra/segundo, esto son 30 minutos de ensayo — muy por encima de
+// la duración real de un ensayo de presión normal.
+const MAX_MUESTRAS_ENSAYO = 1800;
 
 let enGracia = false;
 let tiempoApagado = null;
@@ -2309,19 +2346,43 @@ const rutaArchivo =
 
         doc.end();
 
-        stream.on('finish', () => {
-
-            console.log(
-                `PDF generado: ${nombreArchivo}`
-            );
+        // Esperamos a que el archivo termine de escribirse en disco de
+        // verdad (evento 'finish') antes de dar el ensayo por generado —
+        // antes la función volvía apenas se llamaba doc.end(), sin
+        // confirmar que la escritura hubiera terminado ni enterarse si
+        // fallaba (createWriteStream no tenía listener de 'error').
+        await new Promise((resolve, reject) => {
+            stream.on('finish', resolve);
+            stream.on('error', reject);
         });
+
+        console.log(`PDF generado: ${nombreArchivo}`);
+
+        // Este es el único registro duradero de que el ensayo ocurrió
+        // (aparte del propio PDF en el filesystem): antes esta tabla
+        // existía pero nunca se insertaba nada en ella.
+        db.run(
+            `INSERT INTO ensayos (op, cano, archivo) VALUES (?, ?, ?)`,
+            [String(opActual), String(canoActual), nombreArchivo],
+            err => {
+                if (err) console.error('Error registrando el ensayo en la base:', err.message);
+            }
+        );
 
     } catch (err) {
 
+        // Antes este error solo se logueaba acá y la función terminaba
+        // "bien" igual (la promesa nunca se rechazaba): el ensayo
+        // desaparecía sin PDF, sin fila en la base y sin ningún rastro
+        // más que esta línea. Ahora lo logueamos con todo el contexto y
+        // lo volvemos a lanzar, para que quien llama a esta función se
+        // entere de que el ensayo se perdió en vez de asumir que salió bien.
         console.error(
-            'Error generando PDF:',
+            `⚠️ PDF DE ENSAYO PERDIDO (OP ${opActual}, Caño ${canoActual}, ${datosEnsayo.length} muestras): `,
             err
         );
+
+        throw err;
     }
 }
 
@@ -2441,9 +2502,18 @@ setInterval(async () => {
         // FIN ENSAYO
         // ==========================================
 
-        if (ensayoActivo && enGracia && !dentroDeGracia) {
+        const alcanzoTopeMuestras = datosEnsayo.length >= MAX_MUESTRAS_ENSAYO;
 
-            console.log('FIN ENSAYO');
+        if (ensayoActivo && ((enGracia && !dentroDeGracia) || alcanzoTopeMuestras)) {
+
+            if (alcanzoTopeMuestras) {
+                console.warn(
+                    `⚠️ Ensayo cortado por seguridad: llegó a ${MAX_MUESTRAS_ENSAYO} muestras sin que la ` +
+                    `variable del PLC se apague. Revisar si quedó pegada en ON.`
+                );
+            } else {
+                console.log('FIN ENSAYO');
+            }
 
             ensayoActivo = false;
 
@@ -2596,7 +2666,15 @@ const mqtt = require('mqtt');
 const clienteMqtt = mqtt.connect('mqtt://10.106.100.50:1883');
 
 // Estructura en memoria para guardar el último valor de cada máquina
-let ultimosHorometros = {}; 
+let ultimosHorometros = {};
+
+// Tope de seguridad: no hay una lista fija de máquinas válidas (se
+// descubren dinámicamente de lo que llega por MQTT), pero sin ningún
+// límite, cualquier dispositivo mal configurado que publique en este
+// tópico con nombres de clave nuevos haría crecer este objeto para
+// siempre. Une vez alcanzado el tope, se siguen actualizando las
+// máquinas ya conocidas, pero se ignoran claves nuevas.
+const MAX_MAQUINAS_HOROMETROS = 50;
 
 // Creamos la tabla 'horometros' en tu base de datos SQLite si no existe
 db.serialize(() => {
@@ -2614,6 +2692,14 @@ clienteMqtt.on('connect', () => {
     clienteMqtt.subscribe('horometros2');
 });
 
+// Sin este listener, un error de conexión/reconexión al broker quedaba
+// dependiendo únicamente del manejador global de uncaughtException (que
+// solo loguea sin contexto). La librería mqtt reintenta la conexión sola;
+// esto solo deja un rastro claro de qué está pasando mientras tanto.
+clienteMqtt.on('error', err => {
+    console.error('Error en la conexión MQTT con el Mosquitto:', err.message);
+});
+
 // Al recibir un mensaje, procesamos el objeto JSON completo
 clienteMqtt.on('message', (topic, message) => {
     try {
@@ -2626,8 +2712,14 @@ clienteMqtt.on('message', (topic, message) => {
                 const valorHoras = parseFloat(horas);
                 
                 if (maquina && !isNaN(valorHoras)) {
-                    // Guardamos o actualizamos el valor más fresco en memoria
-                    ultimosHorometros[maquina] = valorHoras;
+                    const esMaquinaNueva = !(maquina in ultimosHorometros);
+
+                    if (esMaquinaNueva && Object.keys(ultimosHorometros).length >= MAX_MAQUINAS_HOROMETROS) {
+                        console.warn(`⚠️ Se ignoró la máquina nueva "${maquina}" por MQTT: se alcanzó el tope de ${MAX_MAQUINAS_HOROMETROS} máquinas.`);
+                    } else {
+                        // Guardamos o actualizamos el valor más fresco en memoria
+                        ultimosHorometros[maquina] = valorHoras;
+                    }
                 }
             }
         }

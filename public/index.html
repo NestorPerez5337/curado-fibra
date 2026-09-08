@@ -281,7 +281,13 @@
     });
     
     if (res.ok) {
-        alert("Receta grabada con éxito en todos los canales (1 y 2) de las 6 máquinas.");
+        const data = await res.json().catch(() => ({}));
+        if (data.fallos && data.fallos.length > 0) {
+            alert(`Atención: no se pudo escribir la receta en la(s) máquina(s) ${data.fallos.join(', ')}. ` +
+                `El resto se grabó correctamente. Revisá esas máquinas antes de continuar.`);
+        } else {
+            alert("Receta grabada con éxito en todos los canales (1 y 2) de las 6 máquinas.");
+        }
         setTimeout(refrescar, 600);
     } else {
         alert("Hubo un error en el servidor al intentar procesar el envío masivo total.");
