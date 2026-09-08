@@ -256,8 +256,12 @@
         async function setear() {
             const valores = {};
             campos.forEach(c => { const v = document.getElementById(`inp-${c.id}`).value; if(v !== "") valores[c.id] = v; });
-            await fetch('/api/setear-plc', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dev:devA, canal:canA, valores}) });
-            alert("Enviado."); setTimeout(refrescar, 600);
+            const res = await fetch('/api/setear-plc', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dev:devA, canal:canA, valores}) });
+            if (res.ok) {
+                alert("Enviado."); setTimeout(refrescar, 600);
+            } else {
+                alert("Error: no se pudo enviar la receta al PLC. Revisá la conexión con la máquina e intentá de nuevo.");
+            }
         }
 
         async function setearTodo() {

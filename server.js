@@ -1615,7 +1615,15 @@ async function ejecutarEncendidoCompresor(compresor) {
 setInterval(() => {
 
     const ahora = new Date();
-    const hoy = ahora.toISOString().slice(0, 10);
+
+    // Fecha en horario LOCAL, no UTC: toISOString() ya se adelanta al día
+    // siguiente durante la noche en Argentina (UTC-3), lo que desalineaba
+    // esto contra horaActual (que sí es local) y contra las excepciones de
+    // calendario guardadas con la fecha local real.
+    const hoy =
+        ahora.getFullYear() + '-' +
+        String(ahora.getMonth() + 1).padStart(2, '0') + '-' +
+        String(ahora.getDate()).padStart(2, '0');
 
     const horaActual =
         String(ahora.getHours()).padStart(2, '0') + ':' +

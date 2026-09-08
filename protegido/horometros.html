@@ -153,8 +153,10 @@
         let label = "";
 
         if (escala === 'dia') {
-            // Agrupa por el día del mes (Ej: "Día 16")
-            label = `Día ${fechaObj.getDate()}`;
+            // Día/Mes (no solo el día del mes: si el rango cruza un mes,
+            // "Día 16" de agosto y "Día 16" de septiembre mezclarían sus
+            // lecturas en el mismo grupo).
+            label = `${fechaObj.getDate()}/${fechaObj.getMonth() + 1}`;
         } else {
             // Para escalas más grandes (Semana/Mes) muestra Día/Mes
             label = `${fechaObj.getDate()}/${fechaObj.getMonth() + 1}`;

@@ -321,6 +321,12 @@ function cambiarMes(delta) {
 async function cargarExcepcionesMes() {
     const compresorId = document.getElementById('cal-compresor').value;
 
+    // Si había un día seleccionado, corresponde a otro compresor/mes: lo
+    // cerramos para no dejar en pantalla datos de otro compresor que
+    // podrían terminar guardándose en el que se acaba de elegir.
+    fechaSeleccionada = null;
+    document.getElementById('panel-excepcion').style.display = 'none';
+
     const desde = new Date(mesActual.getFullYear(), mesActual.getMonth(), 1);
     const hasta = new Date(mesActual.getFullYear(), mesActual.getMonth() + 1, 0);
 
@@ -391,6 +397,13 @@ async function guardarExcepcion() {
     const msg = document.getElementById('msg-excepcion');
 
     if (!fechaSeleccionada || !compresorId) return;
+
+    if (!hora && !horaEncendido) {
+        msg.className = 'msg error';
+        msg.innerText = 'Cargá al menos un horario (apagado o encendido) antes de guardar. ' +
+            'Si querés que ese día no haga nada, usá "Quitar excepción" en vez de guardar vacío.';
+        return;
+    }
 
     const res = await fetch('/api/compresores/excepciones', {
         method: 'POST',
