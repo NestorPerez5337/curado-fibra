@@ -162,6 +162,10 @@ async function cargarHoraGlobal() {
         const data = await res.json();
         document.getElementById('hora-global-apagado').value = data.horaApagadoGlobal || '';
         document.getElementById('hora-global-encendido').value = data.horaEncendidoGlobal || '';
+    } else {
+        const msg = document.getElementById('msg-global');
+        msg.className = 'msg error';
+        msg.innerText = 'No se pudo cargar el horario global.';
     }
 }
 
@@ -188,7 +192,12 @@ async function guardarHoraGlobal() {
 
 async function cargarCompresores() {
     const res = await fetch('/api/compresores');
-    if (!res.ok) return;
+    if (!res.ok) {
+        const msg = document.getElementById('msg-tabla');
+        msg.className = 'msg error';
+        msg.innerText = 'No se pudo cargar la lista de compresores.';
+        return;
+    }
     compresores = await res.json();
 
     const tbody = document.getElementById('tabla-compresores');
@@ -217,7 +226,13 @@ async function cargarCompresores() {
 
 async function actualizarEstadosCompresores() {
     const res = await fetch('/api/compresores/estado');
-    if (!res.ok) return;
+    if (!res.ok) {
+        // Es un refresco automático cada 15s: no interrumpimos con un
+        // mensaje en pantalla por una falla puntual, pero queda registrado
+        // para poder diagnosticar si empieza a fallar seguido.
+        console.error('No se pudo actualizar el estado en vivo de los compresores.');
+        return;
+    }
 
     const estados = await res.json();
 
@@ -277,7 +292,9 @@ async function guardarCompresor(id, boton) {
     if (res.ok) {
         msg.className = 'msg ok';
         msg.innerText = 'Cambios guardados.';
-        cargarCompresores();
+        // No recargamos toda la tabla acá: esta fila ya quedó igual a lo
+        // que se acaba de guardar, y recargar pisaría en silencio lo que
+        // se esté escribiendo en las filas de otros compresores.
     } else {
         msg.className = 'msg error';
         msg.innerText = 'Error guardando los cambios.';
@@ -332,6 +349,9 @@ async function cargarExcepcionesMes() {
 
     if (compresorId) {
         const res = await fetch(`/api/compresores/excepciones?desde=${fmtFecha(desde)}&hasta=${fmtFecha(hasta)}`);
+        if (!res.ok) {
+            console.error('No se pudieron cargar las excepciones de calendario.');
+        }
         const todas = res.ok ? await res.json() : [];
         excepcionesMes = todas.filter(e => String(e.compresorId) === String(compresorId));
     } else {

@@ -325,7 +325,10 @@ async function guardarUsuario(id, boton) {
     msg.className = 'msg ok';
     msg.innerText = `Cambios guardados para "${tr.children[0].innerText}".`;
 
-    cargarUsuarios();
+    // No recargamos toda la tabla: pisaría en silencio lo que se esté
+    // escribiendo en otras filas. Solo limpiamos el campo de contraseña
+    // de esta fila, para que no quede la contraseña vieja tipeada ahí.
+    tr.querySelector('[data-campo="pass"]').value = '';
 }
 
 async function eliminarUsuario(id, usuario) {
@@ -352,7 +355,12 @@ async function eliminarUsuario(id, usuario) {
 
 async function cargarModoPrueba() {
     const res = await fetch('/api/compresores/config');
-    if (!res.ok) return;
+    if (!res.ok) {
+        const msg = document.getElementById('msg-modo-prueba');
+        msg.className = 'msg error';
+        msg.innerText = 'No se pudo cargar el estado del modo prueba.';
+        return;
+    }
 
     const data = await res.json();
     document.getElementById('modo-prueba').checked = !!data.modoPrueba;
@@ -380,7 +388,12 @@ async function guardarModoPrueba() {
 async function cargarCompresores() {
 
     const res = await fetch('/api/compresores');
-    if (!res.ok) return;
+    if (!res.ok) {
+        const msg = document.getElementById('msg-tabla-compresores');
+        msg.className = 'msg error';
+        msg.innerText = 'No se pudo cargar la lista de compresores.';
+        return;
+    }
 
     const compresores = await res.json();
     const tbody = document.getElementById('tabla-compresores');
@@ -506,7 +519,9 @@ async function guardarCompresor(id, boton) {
     if (res.ok) {
         msg.className = 'msg ok';
         msg.innerText = `Cambios guardados para "${body.nombre}".`;
-        cargarCompresores();
+        // No recargamos toda la tabla: esta fila ya quedó igual a lo que
+        // se acaba de guardar, y recargar pisaría en silencio lo que se
+        // esté escribiendo en las filas de otros compresores.
     } else {
         msg.className = 'msg error';
         msg.innerText = 'Error guardando los cambios.';
@@ -532,7 +547,12 @@ async function eliminarCompresor(id, nombre) {
 async function cargarBackups() {
 
     const res = await fetch('/api/backups');
-    if (!res.ok) return;
+    if (!res.ok) {
+        const msg = document.getElementById('msg-backup');
+        msg.className = 'msg error';
+        msg.innerText = 'No se pudo cargar la lista de backups.';
+        return;
+    }
 
     const backups = await res.json();
     const tbody = document.getElementById('tabla-backups');

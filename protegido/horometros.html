@@ -130,6 +130,13 @@
                 // 2. Consultar datos a la API
                 const url = `/api/horometros/datos?maquinas=${maquinasSeleccionadas.join(',')}&desde=${desde}&hasta=${hasta}`;
                 const res = await fetch(url);
+
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    alert(data.error || 'Error consultando los datos de horómetros.');
+                    return;
+                }
+
                 const datosCrudos = await res.json();
 
                 // 3. Procesar y agrupar los datos según la escala seleccionada (Día o Semana)
@@ -140,7 +147,19 @@
 
             } catch (err) {
                 console.error("Error generando gráfico:", err);
+                alert('Error generando el gráfico. Revisá la consola para más detalle.');
             }
+        }
+
+        // Lunes (00:00) de la semana que contiene la fecha dada, para poder
+        // agrupar por semana real en vez de por día individual.
+        function inicioDeSemana(fechaObj) {
+            const d = new Date(fechaObj);
+            const dia = d.getDay(); // 0 = domingo ... 6 = sábado
+            const diferencia = (dia === 0 ? -6 : 1) - dia; // días hasta el lunes de esa semana
+            d.setDate(d.getDate() + diferencia);
+            d.setHours(0, 0, 0, 0);
+            return d;
         }
 
         function procesarDatos(rows, escala) {
@@ -158,8 +177,10 @@
             // lecturas en el mismo grupo).
             label = `${fechaObj.getDate()}/${fechaObj.getMonth() + 1}`;
         } else {
-            // Para escalas más grandes (Semana/Mes) muestra Día/Mes
-            label = `${fechaObj.getDate()}/${fechaObj.getMonth() + 1}`;
+            // Semana real: todas las lecturas de lunes a domingo caen en
+            // el mismo grupo, etiquetado con el lunes de esa semana.
+            const lunes = inicioDeSemana(fechaObj);
+            label = `Sem. ${lunes.getDate()}/${lunes.getMonth() + 1}`;
         }
 
         if (!etiquetasX.includes(label)) {

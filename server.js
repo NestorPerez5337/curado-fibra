@@ -45,8 +45,22 @@ process.on('unhandledRejection', err => {
 // loguearse aunque se haya estado usando el sistema todo ese tiempo).
 const SESION_DURACION_MS = 2 * 60 * 60 * 1000;
 
+// Si falta SESSION_SECRET en el entorno, generamos uno al azar en vez de
+// usar un valor fijo (que quedaría visible en el propio repositorio y le
+// permitiría a cualquiera firmar una cookie de sesión válida). Con esto
+// el sistema sigue arrancando igual, solo que las sesiones no sobreviven
+// a un reinicio del proceso — no debería pasar en producción porque ahí
+// SESSION_SECRET ya está seteado en el entorno del contenedor.
+if (!process.env.SESSION_SECRET) {
+    console.warn(
+        '⚠️ No está seteada la variable de entorno SESSION_SECRET. ' +
+        'Se generó una al azar solo para esta ejecución (las sesiones no van a sobrevivir a un reinicio).'
+    );
+}
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'curado_fibra_secret_2026',
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     rolling: false,
@@ -864,8 +878,13 @@ app.get('/api/log', requiereAdmin, (req, res) => {
     const params = [];
 
     if (usuario) {
-        sql += ` AND usuario = ?`;
-        params.push(usuario);
+        // Búsqueda parcial e insensible a mayúsculas: el campo en pantalla
+        // tiene pinta de buscador libre (placeholder "Todos"), así que
+        // antes una coincidencia exacta hacía que escribir "Nestor" en vez
+        // de "nestor", o un nombre parcial, devolviera 0 resultados sin
+        // ninguna pista de que el problema era el filtro.
+        sql += ` AND usuario LIKE ? COLLATE NOCASE`;
+        params.push(`%${usuario}%`);
     }
 
     if (modulo) {
@@ -1832,6 +1851,10 @@ app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => 
         const { dev, canal, valores } = req.body;
 
         const config = CONFIG_PLCS[dev];
+
+        if (!config) {
+            return res.status(404).send("PLC no encontrado");
+        }
 
         const conexion =
             await crearClienteModbus(
