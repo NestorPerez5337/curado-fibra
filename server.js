@@ -524,6 +524,29 @@ function registrarLog(req, modulo, accion, detalle) {
     );
 }
 
+// SQLite graba los DATETIME DEFAULT CURRENT_TIMESTAMP en UTC siempre,
+// sin importar el TZ del contenedor. Esto convierte ese string
+// ("YYYY-MM-DD HH:MM:SS" en UTC) a la hora local de Argentina antes de
+// mandarlo al frontend, que hasta ahora lo mostraba crudo (3hs adelantado).
+function fechaUtcALocal(fechaUtcSqlite) {
+
+    if (!fechaUtcSqlite) {
+        return fechaUtcSqlite;
+    }
+
+    const fechaUtc = new Date(fechaUtcSqlite.replace(' ', 'T') + 'Z');
+
+    return fechaUtc.toLocaleString('es-AR', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
 function usuarioDesdeFila(fila) {
 
     return {
@@ -916,8 +939,8 @@ app.get('/api/log', requiereAdmin, (req, res) => {
             usuario: f.usuario,
             modulo: f.modulo,
             accion: f.accion,
-            detalle: f.detalle ? JSON.parse(f.detalle) : null,
-            fechaHora: f.fecha_hora
+            fechaHora: fechaUtcALocal(f.fecha_hora),
+            detalle: f.detalle ? JSON.parse(f.detalle) : null
         })));
     });
 });
@@ -1516,7 +1539,7 @@ app.get('/api/compresores/eventos', requierePermiso('compresores'), (req, res) =
             compresor: f.compresor_nombre,
             tipo: f.tipo,
             origen: f.origen,
-            fechaHora: f.fecha_hora
+            fechaHora: fechaUtcALocal(f.fecha_hora)
         })));
     });
 });
