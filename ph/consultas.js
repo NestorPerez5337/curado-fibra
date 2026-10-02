@@ -125,6 +125,51 @@ async function obtenerEnsayo(maquina, id) {
     };
 }
 
+// Ids de los ensayos que entran en una descarga masiva. Todos los filtros
+// son opcionales (rutas.js exige al menos uno). El rango de caños compara
+// como número, porque las columnas son texto.
+async function listarIdsLote(maquina, filtros) {
+
+    const pool = await obtenerPool();
+    const req = pool.request();
+    const condiciones = [];
+
+    if (filtros.op) {
+        condiciones.push('m.NumeroOP = @op');
+        req.input('op', ...texto(filtros.op));
+    }
+
+    if (filtros.desde) {
+        condiciones.push('m.FechaEnsayo >= CAST(@desde AS date)');
+        req.input('desde', sql.VarChar(10), filtros.desde);
+    }
+
+    if (filtros.hasta) {
+        condiciones.push('m.FechaEnsayo < DATEADD(day, 1, CAST(@hasta AS date))');
+        req.input('hasta', sql.VarChar(10), filtros.hasta);
+    }
+
+    if (filtros.canoDesde !== null || filtros.canoHasta !== null) {
+
+        const enRango = col => `TRY_CAST(${col} AS int) BETWEEN @canoDesde AND @canoHasta`;
+        const segundo = maquina.tieneCano2
+            ? ` OR (m.NumeroCano2 NOT IN ('', '0') AND ${enRango('m.NumeroCano2')})`
+            : '';
+
+        condiciones.push(`(${enRango('m.NumeroCano')}${segundo})`);
+        req.input('canoDesde', sql.Int, filtros.canoDesde === null ? 0 : filtros.canoDesde);
+        req.input('canoHasta', sql.Int, filtros.canoHasta === null ? 2147483647 : filtros.canoHasta);
+    }
+
+    const r = await req.query(`
+        SELECT m.Id AS id
+        FROM ${maquina.maestro} m
+        WHERE ${condiciones.join(' AND ')}
+        ORDER BY m.FechaEnsayo, m.Id`);
+
+    return r.recordset.map(f => f.id);
+}
+
 // ------------------------------------------------------
 // Resumen del ensayo (solo informativo: no dice si aprobó)
 // ------------------------------------------------------
@@ -165,4 +210,4 @@ function calcularResumen(puntos, min) {
     };
 }
 
-module.exports = { listarOps, listarCanos, listarEnsayos, obtenerEnsayo, segundos };
+module.exports = { listarOps, listarCanos, listarEnsayos, listarIdsLote, obtenerEnsayo, segundos };

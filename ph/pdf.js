@@ -35,18 +35,25 @@ function ahoraTexto() {
     return `${dos(d.getDate())}/${dos(d.getMonth() + 1)}/${d.getFullYear()} ${dos(d.getHours())}:${dos(d.getMinutes())}`;
 }
 
-function nombreArchivoPdf(ensayo) {
-    const limpio = v => String(v || '').replace(/[^A-Za-z0-9-]+/g, '-');
+const limpio = v => String(v || '').replace(/[^A-Za-z0-9-]+/g, '-');
+
+// ensayos: el primero es el principal; si hay más, es una comparación.
+function nombreArchivoPdf(ensayos) {
+    const ensayo = ensayos[0];
     const ref = ensayo.resumen ? ensayo.resumen.inicio : ensayo.fechaEnsayo;
     const fecha = ref.slice(0, 10);
     const hora = ref.slice(11, 13) + ref.slice(14, 16);
     const canos = ensayo.cano2 ? `${limpio(ensayo.cano)}y${limpio(ensayo.cano2)}` : limpio(ensayo.cano);
-    return `${limpio(ensayo.maquina)}_OP${limpio(ensayo.op)}_CANO${canos}_${fecha}_${hora}_E${ensayo.id}.pdf`;
+    const otros = ensayos.slice(1).map(e => `_vs_E${e.id}`).join('');
+    return `${limpio(ensayo.maquina)}_OP${limpio(ensayo.op)}_CANO${canos}_${fecha}_${hora}_E${ensayo.id}${otros}.pdf`;
 }
 
-async function generarPdfEnsayo(ensayo, usuario) {
+async function generarPdfEnsayo(ensayos, usuario) {
 
-    const imagen = await lienzo.renderToBuffer(GraficoPH.construir([ensayo], { tema: 'claro', escalaFuente: 1.4 }));
+    const comparar = ensayos.length > 1;
+    const ensayo = ensayos[0];
+
+    const imagen = await lienzo.renderToBuffer(GraficoPH.construir(ensayos, { tema: 'claro', escalaFuente: 1.4 }));
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
     const partes = [];
@@ -62,22 +69,31 @@ async function generarPdfEnsayo(ensayo, usuario) {
     const u = ensayo.unidad;
     const num = v => (v === null || v === undefined) ? '—' : String(Math.round(v));
     const mmss = GraficoPH.mmss;
+    const canos = ensayo.cano2 ? `${ensayo.cano} y ${ensayo.cano2}` : ensayo.cano;
 
     // Encabezado
     doc.font('Helvetica-Bold').fontSize(16).fillColor('#111')
-        .text('INFORME DE ENSAYO HIDRÁULICO', izq, 36, { width: ancho, align: 'left' });
+        .text(comparar ? 'COMPARACIÓN DE ENSAYOS HIDRÁULICOS' : 'INFORME DE ENSAYO HIDRÁULICO', izq, 36, { width: ancho, align: 'left' });
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#0077b6')
-        .text(`${ensayo.maquina}  ·  Ensayo N° ${ensayo.id}`, izq, 40, { width: ancho, align: 'right' });
+        .text(
+            comparar ? `${ensayo.maquina}  ·  ${ensayos.length} ensayos` : `${ensayo.maquina}  ·  Ensayo N° ${ensayo.id}`,
+            izq, 40, { width: ancho, align: 'right' }
+        );
 
     doc.moveTo(izq, 62).lineTo(izq + ancho, 62).lineWidth(1).strokeColor('#0077b6').stroke();
 
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
         .text(ensayo.producto || '', izq, 72, { width: ancho });
 
-    // Grilla de datos: 4 columnas x 2 filas
-    const datos = [
+    // Tarjetas de datos, en filas de 4
+    const datos = comparar ? [
         ['OP', ensayo.op],
-        [ensayo.cano2 ? 'Caños' : 'Caño', ensayo.cano2 ? `${ensayo.cano} y ${ensayo.cano2}` : ensayo.cano],
+        [ensayo.cano2 ? 'Caños' : 'Caño', canos],
+        ['Presión mín / máx', `${num(ensayo.min)} / ${num(ensayo.max)} ${u}`],
+        ['Ensayos comparados', ensayos.map(e => `N° ${e.id}`).join(', ')]
+    ] : [
+        ['OP', ensayo.op],
+        [ensayo.cano2 ? 'Caños' : 'Caño', canos],
         ['Fecha', r ? fechaLarga(r.inicio) : fechaLarga(ensayo.fechaEnsayo)],
         ['Inicio – Fin', r ? `${r.inicio.slice(11, 19)} – ${r.fin.slice(11, 19)}` : '—'],
         ['Presión mín / máx', `${num(ensayo.min)} / ${num(ensayo.max)} ${u}`],
@@ -100,8 +116,51 @@ async function generarPdfEnsayo(ensayo, usuario) {
             .text(String(valor || '—'), x + 8, y + 15, { width: colAncho - 16, lineBreak: false, ellipsis: true });
     });
 
+    let yGrafico = yGrilla + Math.ceil(datos.length / 4) * filaAlto + 8;
+
+    // Comparación: una fila por ensayo con el color de su curva
+    if (comparar) {
+
+        const colores = GraficoPH.TEMAS.claro.curvas;
+        const columnas = [
+            ['Ensayo', 0.16], ['Fecha', 0.12], ['Inicio – Fin', 0.20],
+            ['Duración', 0.14], ['Pico alcanzado', 0.20], ['Tiempo sobre mínima', 0.18]
+        ];
+        const altoFila = 16;
+        let y = yGrafico;
+
+        const fila = (celdas, negrita) => {
+            let x = izq;
+            celdas.forEach((texto, i) => {
+                const w = ancho * columnas[i][1];
+                doc.font(negrita ? 'Helvetica-Bold' : 'Helvetica').fontSize(negrita ? 7.5 : 9.5).fillColor(negrita ? '#667' : '#111')
+                    .text(texto, x + (i === 0 ? 18 : 6), y + 4, { width: w - 10, lineBreak: false, ellipsis: true });
+                x += w;
+            });
+            y += altoFila;
+        };
+
+        doc.rect(izq, y, ancho, altoFila).fillColor('#f3f6f9').fill();
+        fila(columnas.map(c => c[0].toUpperCase()), true);
+
+        ensayos.forEach((e, i) => {
+            const re = e.resumen;
+            doc.rect(izq + 6, y + 4, 8, 8).fillColor(colores[i % colores.length]).fill();
+            fila([
+                `N° ${e.id}${i === 0 ? ' (principal)' : ''}`,
+                re ? fechaLarga(re.inicio) : fechaLarga(e.fechaEnsayo),
+                re ? `${re.inicio.slice(11, 19)} – ${re.fin.slice(11, 19)}` : '—',
+                re ? mmss(re.duracionSeg) : '—',
+                re ? `${num(re.pico.p)} ${u}  (${re.pico.t.slice(11, 19)})` : '—',
+                re && re.segSobreMin !== null ? mmss(re.segSobreMin) : '—'
+            ], false);
+            doc.moveTo(izq, y).lineTo(izq + ancho, y).lineWidth(0.5).strokeColor('#e4e4e4').stroke();
+        });
+
+        yGrafico = y + 8;
+    }
+
     // Gráfico
-    const yGrafico = yGrilla + 2 * filaAlto + 8;
     const altoDisponible = doc.page.height - yGrafico - 50;
     doc.image(imagen, izq, yGrafico, { fit: [ancho, altoDisponible], align: 'center' });
 

@@ -196,5 +196,5 @@
         };
     }
 
-    return { construir, mmss, segundos };
+    return { construir, mmss, segundos, TEMAS };
 });
