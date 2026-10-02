@@ -1,0 +1,9 @@
+# Lo que NO se copia a la imagen de Docker (COPY . . en el Dockerfile).
+# .env tiene contraseñas: en el servidor las variables vienen de Portainer.
+.env
+.git
+node_modules
+data
+pdfs
+backups
+*.log

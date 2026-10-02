@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visor de Ensayos PH</title>
+<script src="/ph-assets/chart.min.js"></script>
+<script src="/ph-assets/hammer.min.js"></script>
+<script src="/ph-assets/chartjs-plugin-zoom.min.js"></script>
+<script src="/ph-assets/chartjs-plugin-annotation.min.js"></script>
+<script src="/ph-assets/grafico.js"></script>
+<style>
+:root{ --bg:#111; --panel:#1a1a1a; --panel2:#222; --borde:#333; --texto:#eee; --tenue:#999; --acento:#00bfff; --error:#ff6b6b; }
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--texto);}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--borde)}
+header a{color:var(--acento);text-decoration:none;font-weight:bold}
+header h1{font-size:20px;margin:0;flex:1}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid #444;background:var(--panel2);color:var(--texto);padding:8px 14px}
+button:hover{border-color:var(--acento)}
+button.primario{background:var(--acento);color:#001018;border-color:var(--acento);font-weight:bold}
+button:disabled{opacity:.55;cursor:not-allowed}
+.filtros{display:flex;flex-wrap:wrap;gap:12px;align-items:end;padding:14px 20px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--tenue);gap:4px}
+input,select{background:var(--panel2);color:var(--texto);border:1px solid #444;border-radius:6px;padding:8px;font:inherit;min-width:110px}
+select:disabled,input:disabled{opacity:.5}
+#ensayo{min-width:230px}
+.chk{flex-direction:row;align-items:center;gap:6px;font-size:14px;color:var(--texto);padding-bottom:8px}
+.chk input{min-width:0}
+.espacio{flex:1}
+.aviso{margin:0 20px 10px;padding:10px 14px;border-radius:6px;background:#3a1d1d;color:var(--error);display:none}
+.tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;padding:0 20px}
+.tarjeta{background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:10px 12px}
+.tarjeta small{display:block;color:var(--tenue);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.tarjeta b{font-size:17px;white-space:nowrap}
+.tarjeta .ayuda{font-weight:normal}
+.grafico{margin:12px 20px 20px;background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:12px 16px}
+.grafico .barra{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+.grafico h2{font-size:16px;margin:0;flex:1;min-width:200px}
+.ayuda{font-size:12px;color:var(--tenue)}
+.lienzo{position:relative;height:calc(100vh - 300px);min-height:360px}
+.vacio{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--tenue);font-size:15px;text-align:center;padding:20px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;padding:10px 16px;border-radius:8px;display:none}
+@media (max-width:700px){.lienzo{height:420px}}
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/">&larr; Menú</a>
+  <h1>Visor de Ensayos PH</h1>
+</header>
+
+<div class="filtros">
+  <label>Máquina <select id="maquina"></select></label>
+  <label>OP <input id="op" list="listaOps" placeholder="Ej: 7414" autocomplete="off"></label>
+  <datalist id="listaOps"></datalist>
+  <label>Caño <select id="cano" disabled></select></label>
+  <label>Ensayo <select id="ensayo" disabled></select></label>
+  <label class="chk"><input type="checkbox" id="comparar" disabled> Superponer repeticiones</label>
+  <span class="espacio"></span>
+  <button class="primario" id="btnPdf" disabled>⬇ Descargar PDF</button>
+</div>
+
+<div class="aviso" id="aviso"></div>
+
+<div class="tarjetas" id="tarjetas"></div>
+
+<div class="grafico">
+  <div class="barra">
+    <h2 id="titulo">&nbsp;</h2>
+    <span class="ayuda">Arrastrá para hacer zoom · Ctrl + arrastrar para desplazar</span>
+    <button id="btnReset">↺ Vista completa</button>
+  </div>
+  <div class="lienzo">
+    <canvas id="chart"></canvas>
+    <div class="vacio" id="vacio">Elegí una OP para empezar</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+Chart.register(window.ChartZoom, window['chartjs-plugin-annotation']);
+Chart.defaults.font.family = 'Arial, Helvetica, sans-serif';
+
+const $ = id => document.getElementById(id);
+const estado = { maquina: null, ensayos: [], cache: {} };
+let chart = null;
+
+// ---------- Utilidades ----------
+
+async function api(url) {
+  const r = await fetch(url);
+  if (r.status === 401) { window.location.href = '/'; throw new Error('Sesión vencida'); }
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(datos.error || 'Error consultando el servidor');
+  return datos;
+}
+
+function mostrarError(err) {
+  $('aviso').textContent = err ? err.message : '';
+  $('aviso').style.display = err ? 'block' : 'none';
+}
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2600);
+}
+
+function opcion(valor, texto) {
+  const o = document.createElement('option'); o.value = valor; o.textContent = texto; return o;
+}
+
+const diaMesHora = t => `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)}`;
+const fechaLarga = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)}`;
+const num = v => v === null || v === undefined ? '—' : String(Math.round(v));
+
+function actualizarUrl() {
+  const p = new URLSearchParams();
+  if (estado.maquina) p.set('maquina', estado.maquina);
+  if ($('op').value.trim()) p.set('op', $('op').value.trim());
+  if ($('cano').value) p.set('cano', $('cano').value);
+  if ($('ensayo').value) p.set('ensayo', $('ensayo').value);
+  history.replaceState(null, '', '/visor-ph?' + p.toString());
+}
+
+function limpiarDesde(paso) {
+  if (paso <= 1) { $('cano').innerHTML = ''; $('cano').disabled = true; }
+  if (paso <= 2) { $('ensayo').innerHTML = ''; $('ensayo').disabled = true; estado.ensayos = []; }
+  $('comparar').checked = false; $('comparar').disabled = true;
+  $('btnPdf').disabled = true;
+  $('tarjetas').innerHTML = '';
+  $('titulo').innerHTML = '&nbsp;';
+  if (chart) { chart.destroy(); chart = null; }
+  $('vacio').style.display = 'flex';
+}
+
+// ---------- Carga en cascada: máquina → OP → caño → ensayo ----------
+
+async function cargarMaquinas(inicial) {
+  const maquinas = await api('/api/ph/maquinas');
+  maquinas.forEach(m => $('maquina').appendChild(opcion(m.clave, m.nombre)));
+  if (inicial.maquina && maquinas.some(m => m.clave === inicial.maquina)) $('maquina').value = inicial.maquina;
+  estado.maquina = $('maquina').value;
+}
+
+async function cargarOps() {
+  $('listaOps').innerHTML = '';
+  const ops = await api(`/api/ph/${estado.maquina}/ops`);
+  ops.forEach(o => $('listaOps').appendChild(opcion(o.op, `${o.ensayos} ensayos · último ${diaMesHora(o.ultimo)}`)));
+}
+
+async function cargarCanos(canoInicial) {
+  limpiarDesde(1);
+  const op = $('op').value.trim();
+  if (!op) { $('vacio').textContent = 'Elegí una OP para empezar'; actualizarUrl(); return; }
+
+  const canos = await api(`/api/ph/${estado.maquina}/canos?op=${encodeURIComponent(op)}`);
+  if (!canos.length) { $('vacio').textContent = `No hay ensayos para la OP ${op}`; actualizarUrl(); return; }
+
+  canos.forEach(c => $('cano').appendChild(opcion(c.cano, c.ensayos > 1 ? `${c.cano}  (${c.ensayos} ensayos)` : c.cano)));
+  $('cano').disabled = false;
+  if (canoInicial && canos.some(c => c.cano === canoInicial)) $('cano').value = canoInicial;
+  else $('cano').value = canos[canos.length - 1].cano;   // el último caño de la OP
+  await cargarEnsayos();
+}
+
+async function cargarEnsayos(ensayoInicial) {
+  limpiarDesde(2);
+  const op = $('op').value.trim(), cano = $('cano').value;
+  estado.ensayos = await api(`/api/ph/${estado.maquina}/ensayos?op=${encodeURIComponent(op)}&cano=${encodeURIComponent(cano)}`);
+
+  if (!estado.ensayos.length) { $('vacio').textContent = 'Sin ensayos para ese caño'; actualizarUrl(); return; }
+
+  estado.ensayos.forEach((e, i) => {
+    const desde = e.inicio || e.fechaEnsayo;
+    const extra = estado.ensayos.length > 1 && i === 0 ? ' (último)' : '';
+    $('ensayo').appendChild(opcion(e.id, `${diaMesHora(desde)} — Ensayo ${e.id}${extra}`));
+  });
+  $('ensayo').disabled = false;
+  $('comparar').disabled = estado.ensayos.length < 2;
+  if (ensayoInicial && estado.ensayos.some(e => String(e.id) === String(ensayoInicial))) $('ensayo').value = ensayoInicial;
+  await mostrar();
+}
+
+async function obtenerEnsayo(id) {
+  const clave = `${estado.maquina}/${id}`;
+  if (!estado.cache[clave]) estado.cache[clave] = await api(`/api/ph/${estado.maquina}/ensayos/${id}`);
+  return estado.cache[clave];
+}
+
+// ---------- Dibujo ----------
+
+function pintarTarjetas(e) {
+  const r = e.resumen, u = e.unidad;
+  const t = [
+    ['OP', e.op],
+    [e.cano2 ? 'Caños' : 'Caño', e.cano2 ? `${e.cano} y ${e.cano2}` : e.cano],
+    ['Presión mín / máx', `${num(e.min)} / ${num(e.max)} ${u}`],
+    ['Fecha', r ? fechaLarga(r.inicio) : fechaLarga(e.fechaEnsayo)],
+    ['Inicio – fin', r ? `${r.inicio.slice(11, 19)} – ${r.fin.slice(11, 19)}` : '—'],
+    ['Duración', r ? GraficoPH.mmss(r.duracionSeg) : '—'],
+    ['Pico alcanzado', r ? [`${num(r.pico.p)} ${u}`, r.pico.t.slice(11, 19)] : '—'],
+    ['Tiempo ≥ mínima', r && r.segSobreMin !== null ? GraficoPH.mmss(r.segSobreMin) : '—'],
+  ];
+  $('tarjetas').innerHTML = '';
+  t.forEach(([k, v]) => {
+    const d = document.createElement('div'); d.className = 'tarjeta';
+    const s = document.createElement('small'); s.textContent = k;
+    const b = document.createElement('b');
+    if (Array.isArray(v)) {
+      b.textContent = v[0] + ' ';
+      const a = document.createElement('span'); a.className = 'ayuda'; a.textContent = v[1]; b.appendChild(a);
+    } else b.textContent = v;
+    d.append(s, b); $('tarjetas').appendChild(d);
+  });
+}
+
+const pluginCursor = {
+  id: 'cursor',
+  afterDraw(c) {
+    const a = c.tooltip && c.tooltip.getActiveElements ? c.tooltip.getActiveElements() : [];
+    if (!a.length) return;
+    const x = a[0].element.x, g = c.ctx;
+    g.save(); g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, c.chartArea.top); g.lineTo(x, c.chartArea.bottom); g.stroke(); g.restore();
+  }
+};
+
+async function mostrar() {
+  mostrarError(null);
+  const id = $('ensayo').value;
+  if (!id) return;
+
+  const principal = await obtenerEnsayo(id);
+  let lista = [principal];
+
+  if ($('comparar').checked) {
+    const otros = estado.ensayos.filter(e => String(e.id) !== String(id)).slice(0, 3);
+    lista = lista.concat(await Promise.all(otros.map(e => obtenerEnsayo(e.id))));
+  }
+
+  pintarTarjetas(principal);
+  $('titulo').textContent = principal.producto || '';
+  $('btnPdf').disabled = false;
+
+  if (!principal.puntos.length) {
+    if (chart) { chart.destroy(); chart = null; }
+    $('vacio').textContent = 'Este ensayo no tiene lecturas de presión guardadas';
+    $('vacio').style.display = 'flex';
+    actualizarUrl();
+    return;
+  }
+
+  const config = GraficoPH.construir(lista, { tema: 'oscuro', responsive: true });
+  config.options.plugins.zoom = {
+    zoom: { drag: { enabled: true, backgroundColor: 'rgba(0,191,255,.15)' }, mode: 'x' },
+    pan: { enabled: true, mode: 'x', modifierKey: 'ctrl' },
+    limits: { x: { min: 'original', max: 'original' } }
+  };
+  config.plugins = [pluginCursor];
+
+  if (chart) chart.destroy();
+  $('vacio').style.display = 'none';
+  chart = new Chart($('chart'), config);
+  actualizarUrl();
+}
+
+// ---------- PDF ----------
+
+async function descargarPdf() {
+  const id = $('ensayo').value;
+  if (!id) return;
+  const btn = $('btnPdf');
+  btn.disabled = true; btn.textContent = 'Generando…';
+  try {
+    const r = await fetch(`/api/ph/${estado.maquina}/ensayos/${id}/pdf`);
+    if (r.status === 401) { window.location.href = '/'; return; }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo generar el PDF');
+    const nombre = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || `ensayo_${id}.pdf`;
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a'); a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast(`Descargado ${nombre}`);
+  } catch (err) {
+    mostrarError(err);
+  } finally {
+    btn.disabled = false; btn.textContent = '⬇ Descargar PDF';
+  }
+}
+
+// ---------- Eventos ----------
+
+const conAviso = fn => async (...args) => { try { await fn(...args); } catch (err) { mostrarError(err); } };
+
+$('maquina').addEventListener('change', conAviso(async () => {
+  estado.maquina = $('maquina').value; $('op').value = '';
+  limpiarDesde(1); await cargarOps(); actualizarUrl();
+}));
+$('op').addEventListener('change', conAviso(() => cargarCanos()));
+$('op').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+$('cano').addEventListener('change', conAviso(() => cargarEnsayos()));
+$('ensayo').addEventListener('change', conAviso(mostrar));
+$('comparar').addEventListener('change', conAviso(mostrar));
+$('btnReset').addEventListener('click', () => chart && chart.resetZoom());
+$('btnPdf').addEventListener('click', descargarPdf);
+
+// Arranque: respeta ?maquina=&op=&cano=&ensayo= para poder compartir un link.
+conAviso(async () => {
+  const inicial = Object.fromEntries(new URLSearchParams(location.search));
+  await cargarMaquinas(inicial);
+  await cargarOps();
+  if (inicial.op) {
+    $('op').value = inicial.op;
+    await cargarCanos(inicial.cano);
+    if (inicial.ensayo && $('ensayo').value !== inicial.ensayo) await cargarEnsayos(inicial.ensayo);
+  }
+})();
+</script>
+</body>
+</html>
