@@ -40,7 +40,6 @@ select:disabled,input:disabled{opacity:.5}
 .ayuda{font-size:12px;color:var(--tenue)}
 .lienzo{position:relative;height:calc(100vh - 300px);min-height:360px}
 .vacio{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--tenue);font-size:15px;text-align:center;padding:20px}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;padding:10px 16px;border-radius:8px;display:none}
 @media (max-width:700px){.lienzo{height:420px}}
 </style>
 </head>
@@ -59,7 +58,7 @@ select:disabled,input:disabled{opacity:.5}
   <label>Ensayo <select id="ensayo" disabled></select></label>
   <label class="chk"><input type="checkbox" id="comparar" disabled> Superponer repeticiones</label>
   <span class="espacio"></span>
-  <button class="primario" id="btnPdf" disabled>⬇ Descargar PDF</button>
+  <button class="primario" id="btnPdf" disabled title="Abre el informe en una pestaña nueva para guardarlo o imprimirlo">📄 Abrir PDF</button>
 </div>
 
 <div class="aviso" id="aviso"></div>
@@ -78,7 +77,6 @@ select:disabled,input:disabled{opacity:.5}
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
 
 <script>
 Chart.register(window.ChartZoom, window['chartjs-plugin-annotation']);
@@ -101,11 +99,6 @@ async function api(url) {
 function mostrarError(err) {
   $('aviso').textContent = err ? err.message : '';
   $('aviso').style.display = err ? 'block' : 'none';
-}
-
-function toast(msg) {
-  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2600);
 }
 
 function opcion(valor, texto) {
@@ -228,18 +221,21 @@ const pluginCursor = {
   }
 };
 
+// Repeticiones que se superponen al ensayo elegido (hasta 3). La usan el
+// gráfico y el PDF, así los dos muestran siempre lo mismo.
+function idsSuperpuestos() {
+  if (!$('comparar').checked) return [];
+  const id = $('ensayo').value;
+  return estado.ensayos.filter(e => String(e.id) !== String(id)).slice(0, 3).map(e => e.id);
+}
+
 async function mostrar() {
   mostrarError(null);
   const id = $('ensayo').value;
   if (!id) return;
 
   const principal = await obtenerEnsayo(id);
-  let lista = [principal];
-
-  if ($('comparar').checked) {
-    const otros = estado.ensayos.filter(e => String(e.id) !== String(id)).slice(0, 3);
-    lista = lista.concat(await Promise.all(otros.map(e => obtenerEnsayo(e.id))));
-  }
+  const lista = [principal, ...await Promise.all(idsSuperpuestos().map(obtenerEnsayo))];
 
   pintarTarjetas(principal);
   $('titulo').textContent = principal.producto || '';
@@ -269,26 +265,15 @@ async function mostrar() {
 
 // ---------- PDF ----------
 
-async function descargarPdf() {
+// Se abre en una pestaña nueva, en el visor de PDF del navegador: una
+// descarga forzada la bloquean Chrome/Edge/Brave porque la app es http://.
+// Desde esa pestaña se guarda o se imprime con el nombre correcto.
+function abrirPdf() {
   const id = $('ensayo').value;
   if (!id) return;
-  const btn = $('btnPdf');
-  btn.disabled = true; btn.textContent = 'Generando…';
-  try {
-    const r = await fetch(`/api/ph/${estado.maquina}/ensayos/${id}/pdf`);
-    if (r.status === 401) { window.location.href = '/'; return; }
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo generar el PDF');
-    const nombre = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || `ensayo_${id}.pdf`;
-    const url = URL.createObjectURL(await r.blob());
-    const a = document.createElement('a'); a.href = url; a.download = nombre;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    toast(`Descargado ${nombre}`);
-  } catch (err) {
-    mostrarError(err);
-  } finally {
-    btn.disabled = false; btn.textContent = '⬇ Descargar PDF';
-  }
+  const otros = idsSuperpuestos();
+  const extra = otros.length ? `?superponer=${otros.join(',')}` : '';
+  window.open(`/api/ph/${estado.maquina}/ensayos/${id}/pdf${extra}`, '_blank');
 }
 
 // ---------- Eventos ----------
@@ -305,7 +290,7 @@ $('cano').addEventListener('change', conAviso(() => cargarEnsayos()));
 $('ensayo').addEventListener('change', conAviso(mostrar));
 $('comparar').addEventListener('change', conAviso(mostrar));
 $('btnReset').addEventListener('click', () => chart && chart.resetZoom());
-$('btnPdf').addEventListener('click', descargarPdf);
+$('btnPdf').addEventListener('click', abrirPdf);
 
 // Arranque: respeta ?maquina=&op=&cano=&ensayo= para poder compartir un link.
 conAviso(async () => {

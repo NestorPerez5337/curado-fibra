@@ -144,10 +144,26 @@ module.exports = function montarVisorPH(app, { requierePermiso, requierePermisoP
             const ensayo = await cargarEnsayo(req, res);
             if (!ensayo) return;
 
-            const pdf = await generarPdfEnsayo(ensayo, req.usuario.usuario);
+            // ?superponer=116,117 -> mismas repeticiones que se ven en pantalla
+            const otrosIds = String(req.query.superponer || '')
+                .split(',')
+                .filter(id => /^\d{1,9}$/.test(id) && id !== String(ensayo.id))
+                .slice(0, 3);
 
+            const otros = [];
+            for (const id of otrosIds) {
+                const otro = await consultas.obtenerEnsayo(req.maquina, parseInt(id, 10));
+                if (otro) otros.push(otro);
+            }
+
+            const ensayos = [ensayo, ...otros];
+            const pdf = await generarPdfEnsayo(ensayos, req.usuario.usuario);
+
+            // "inline": se abre en el visor de PDF del navegador. Una descarga
+            // forzada ("attachment") la bloquean Chrome/Edge/Brave porque la
+            // app corre en http://. El nombre igual se usa al guardarlo.
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivoPdf(ensayo)}"`);
+            res.setHeader('Content-Disposition', `inline; filename="${nombreArchivoPdf(ensayos)}"`);
             res.send(pdf);
         } catch (err) {
             responderError(res, err);
