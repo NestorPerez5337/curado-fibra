@@ -2818,6 +2818,12 @@ app.get('/compresores/historial', requierePermisoPagina('compresores'), (req, re
     res.sendFile(path.join(__dirname, 'protegido', 'compresores-historial.html'));
 });
 
+// ======================================================
+// VISOR DE ENSAYOS PH (código en ./ph)
+// ======================================================
+
+require('./ph/rutas')(app, { requierePermiso, requierePermisoPagina });
+
 app.listen(PORT, '0.0.0.0', () => {
 
     console.log(
