@@ -22,7 +22,8 @@ function configuracion() {
         database: process.env.PH_SQL_DATABASE || 'Automatizacion',
         user: process.env.PH_SQL_USER,
         password: process.env.PH_SQL_PASSWORD,
-        connectionTimeout: 8000,
+        // El SQL Server a veces tarda varios segundos en aceptar conexiones.
+        connectionTimeout: 15000,
         requestTimeout: 30000,
         pool: { max: 5, min: 0, idleTimeoutMillis: 60000 },
         options: {
@@ -70,4 +71,12 @@ function obtenerPool() {
     return poolPromise;
 }
 
-module.exports = { sql, obtenerPool, estaConfigurado };
+// Errores de red / conexión (no de la consulta en sí): vale la pena
+// reintentar, o avisar "sin conexión" en vez de "error".
+const CODIGOS_CONEXION = ['ESOCKET', 'ETIMEOUT', 'ECONNCLOSED', 'EINSTLOOKUP', 'ENOTOPEN', 'ECONNRESET'];
+
+function esErrorDeConexion(err) {
+    return !!err && (CODIGOS_CONEXION.includes(err.code) || err.name === 'ConnectionError');
+}
+
+module.exports = { sql, obtenerPool, estaConfigurado, esErrorDeConexion };

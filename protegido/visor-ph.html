@@ -40,6 +40,26 @@ select:disabled,input:disabled{opacity:.5}
 .ayuda{font-size:12px;color:var(--tenue)}
 .lienzo{position:relative;height:calc(100vh - 300px);min-height:360px}
 .vacio{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--tenue);font-size:15px;text-align:center;padding:20px}
+/* Descarga masiva */
+#btnMasiva.activo{border-color:var(--acento);color:var(--acento)}
+#btnMasiva.listo{background:#14532d;border-color:#3ecf6e;color:#bff5cf}
+.fondo{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+.fondo.abierto{display:flex}
+.modal{background:var(--panel);border:1px solid #444;border-radius:10px;width:min(480px,100%);padding:20px;max-height:100%;overflow:auto}
+.modal h3{margin:0 0 4px}
+.modal .grilla{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.modal input{min-width:0;width:100%}
+.conteo{background:var(--panel2);border-radius:6px;padding:10px;font-size:14px;margin-bottom:12px;min-height:38px}
+.conteo.mal{color:var(--error)}
+.progreso{display:none;margin:12px 0}
+.progreso .pista{height:22px;background:#2a2a2a;border-radius:11px;overflow:hidden}
+.progreso .relleno{height:100%;width:0;background:linear-gradient(90deg,#0088cc,var(--acento));transition:width .4s;
+  display:flex;align-items:center;justify-content:flex-end;padding-right:8px;font-size:12px;font-weight:bold;color:#001018;min-width:34px}
+.progreso p{margin:6px 0 0;font-size:13px;color:var(--tenue);line-height:1.4}
+.acciones{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+#mCancelar{border-color:#7a2e2e;color:#ff9b9b}
+.ultimo{display:none;margin-top:12px;padding:10px;border-radius:6px;background:#14321f;border:1px solid #2b6b3f;font-size:13px;line-height:1.4}
+.ultimo a{color:#7ee2a0;font-weight:bold;white-space:nowrap}
 @media (max-width:700px){.lienzo{height:420px}}
 </style>
 </head>
@@ -48,6 +68,7 @@ select:disabled,input:disabled{opacity:.5}
 <header>
   <a href="/">&larr; Menú</a>
   <h1>Visor de Ensayos PH</h1>
+  <button id="btnMasiva">📦 Descarga masiva</button>
 </header>
 
 <div class="filtros">
@@ -78,6 +99,32 @@ select:disabled,input:disabled{opacity:.5}
 </div>
 
 
+<!-- Modal de descarga masiva -->
+<div class="fondo" id="fondo">
+  <div class="modal">
+    <h3>Descarga masiva de PDFs</h3>
+    <div class="ayuda" id="mMaquina">Completá al menos un filtro. Se genera un ZIP con un PDF por ensayo.</div>
+    <div class="ultimo" id="mUltimo"></div>
+    <div class="grilla">
+      <label style="grid-column:span 2">OP <input id="mOp" list="listaOps" autocomplete="off"></label>
+      <label>Fecha desde <input type="date" id="mDesde"></label>
+      <label>Fecha hasta <input type="date" id="mHasta"></label>
+      <label>Caño desde <input type="number" id="mCanoDesde" min="0"></label>
+      <label>Caño hasta <input type="number" id="mCanoHasta" min="0"></label>
+    </div>
+    <div class="conteo" id="mConteo"></div>
+    <div class="progreso" id="mProgreso">
+      <div class="pista"><div class="relleno" id="mRelleno">0%</div></div>
+      <p id="mDetalle"></p>
+    </div>
+    <div class="acciones">
+      <button id="mCerrar">Cerrar</button>
+      <button id="mCancelar" style="display:none">Cancelar generación</button>
+      <button class="primario" id="mGenerar" disabled>GENERAR PDFs</button>
+    </div>
+  </div>
+</div>
+
 <script>
 Chart.register(window.ChartZoom, window['chartjs-plugin-annotation']);
 Chart.defaults.font.family = 'Arial, Helvetica, sans-serif';
@@ -88,11 +135,15 @@ let chart = null;
 
 // ---------- Utilidades ----------
 
-async function api(url) {
-  const r = await fetch(url);
+// Con "cuerpo" hace un POST con JSON. Si falla, el error lleva los datos
+// de la respuesta en err.datos.
+async function api(url, cuerpo) {
+  const r = await fetch(url, cuerpo === undefined ? undefined : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+  });
   if (r.status === 401) { window.location.href = '/'; throw new Error('Sesión vencida'); }
   const datos = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(datos.error || 'Error consultando el servidor');
+  if (!r.ok) { const e = new Error(datos.error || 'Error consultando el servidor'); e.datos = datos; throw e; }
   return datos;
 }
 
@@ -276,6 +327,191 @@ function abrirPdf() {
   window.open(`/api/ph/${estado.maquina}/ensayos/${id}/pdf${extra}`, '_blank');
 }
 
+// ---------- Descarga masiva ----------
+//
+// El servidor permite UN lote a la vez para todos. La pantalla consulta
+// su estado (/api/ph/lote) al abrir y cada 1,5 s mientras se genera, así
+// que si se recarga la página o lo pidió otra persona, se ve igual.
+
+const masiva = { lote: { estado: 'libre' }, total: 0, maximo: 3000, timerConteo: null, timerEstado: null, esAdmin: false, formulario: false };
+
+const camposLote = ['mOp', 'mDesde', 'mHasta', 'mCanoDesde', 'mCanoHasta'];
+
+function filtrosLote() {
+  return {
+    op: $('mOp').value.trim(), desde: $('mDesde').value, hasta: $('mHasta').value,
+    canoDesde: $('mCanoDesde').value.trim(), canoHasta: $('mCanoHasta').value.trim()
+  };
+}
+
+// Filtros y usuario los escribió otra persona: se escapan antes de mostrarlos.
+const esc = t => String(t === null || t === undefined ? '' : t)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const horaDe = ms => {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+};
+
+function tiempoTexto(seg) {
+  if (seg === null || seg === undefined) return 'calculando…';
+  if (seg < 60) return `~${seg} s`;
+  return `~${Math.round(seg / 60)} min`;
+}
+
+function contarDespues() {
+  clearTimeout(masiva.timerConteo);
+  masiva.total = 0;
+  pintarLote();
+  masiva.timerConteo = setTimeout(contar, 400);
+}
+
+async function contar() {
+  const c = $('mConteo');
+  const f = filtrosLote();
+  if (!f.op && !f.desde && !f.hasta && !f.canoDesde && !f.canoHasta) {
+    c.className = 'conteo'; c.textContent = 'Completá al menos un filtro.'; return;
+  }
+  c.className = 'conteo'; c.textContent = 'Contando ensayos…';
+  try {
+    const r = await api(`/api/ph/${estado.maquina}/lote/contar`, f);
+    masiva.total = r.total; masiva.maximo = r.maximo;
+    if (!r.total) { c.className = 'conteo mal'; c.textContent = 'No hay ensayos con esos filtros.'; }
+    else if (r.total > r.maximo) { c.className = 'conteo mal'; c.textContent = `Son ${r.total} ensayos: el máximo por descarga es ${r.maximo}. Achicá los filtros.`; }
+    else { c.className = 'conteo'; c.innerHTML = `Se van a generar <b>${r.total} PDF${r.total === 1 ? '' : 's'}</b>.`; }
+  } catch (err) {
+    masiva.total = 0; c.className = 'conteo mal'; c.textContent = err.message;
+  }
+  pintarLote();
+}
+
+// Dibuja botón del encabezado + modal según el estado del lote en el servidor.
+function pintarLote() {
+  const l = masiva.lote;
+  const generando = l.estado === 'generando';
+  const terminado = ['listo', 'error', 'cancelado'].includes(l.estado);
+  const verResultado = generando || (terminado && !masiva.formulario);
+
+  // Encabezado
+  const b = $('btnMasiva');
+  b.className = generando ? 'activo' : (l.estado === 'listo' ? 'listo' : '');
+  b.textContent = generando ? `📦 Generando… ${l.porcentaje}%` : (l.estado === 'listo' ? '📦 ZIP listo' : '📦 Descarga masiva');
+
+  // Formulario
+  camposLote.forEach(id => $(id).disabled = verResultado);
+  $('mConteo').style.display = verResultado ? 'none' : 'block';
+
+  // Progreso / resultado
+  $('mProgreso').style.display = verResultado ? 'block' : 'none';
+  if (verResultado) {
+    const pct = l.estado === 'listo' ? 100 : l.porcentaje;
+    $('mRelleno').style.width = pct + '%';
+    $('mRelleno').textContent = pct + '%';
+    const quien = l.esMio ? 'vos' : esc(l.usuario);
+    let texto;
+    if (generando) {
+      texto = `⏳ <b>Generando ${l.hecho} de ${l.total} PDFs</b> · faltan ${tiempoTexto(l.segundosRestantes)}<br>` +
+              `${esc(l.filtros)} · pedido por ${quien} a las ${horaDe(l.inicio)}<br>` +
+              `Podés cerrar esta ventana y seguir usando el visor: se sigue generando.`;
+    } else if (l.estado === 'listo') {
+      const mb = (l.bytes / 1048576).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      texto = `✅ <b>ZIP listo: ${l.total - l.errores} PDFs</b> (${mb} MB)<br>` +
+              `${esc(l.filtros)} · pedido por ${quien} a las ${horaDe(l.inicio)}<br>` +
+              (l.errores ? `⚠️ ${l.errores} no se pudieron generar: el detalle está en ERRORES.txt, dentro del ZIP.<br>` : '') +
+              `Se puede descargar hasta las ${horaDe(l.venceEn)}; después se borra solo.<br>` +
+              `ℹ️ El navegador puede avisar "descarga no segura" porque el sitio es http. Es normal: elegí <b>Conservar</b>.`;
+    } else if (l.estado === 'cancelado') {
+      texto = `Generación cancelada (se habían hecho ${l.hecho} de ${l.total}).`;
+    } else {
+      texto = `❌ ${esc(l.error || 'Falló la generación')}`;
+    }
+    $('mDetalle').innerHTML = texto;
+  }
+
+  // Botones
+  const g = $('mGenerar');
+  if (generando) {
+    g.disabled = true; g.textContent = 'Generando…';
+  } else if (l.estado === 'listo' && !masiva.formulario) {
+    g.disabled = false; g.textContent = '⬇ Descargar ZIP';
+  } else {
+    g.textContent = 'GENERAR PDFs';
+    g.disabled = !(masiva.total > 0 && masiva.total <= masiva.maximo) || g.dataset.enviando === '1';
+  }
+  $('mCancelar').style.display = generando && (l.esMio || masiva.esAdmin) ? '' : 'none';
+
+  // Con el formulario a la vista, un ZIP ya terminado se ofrece arriba
+  // para que no se pierda de vista.
+  const u = $('mUltimo');
+  if (l.estado === 'listo' && masiva.formulario) {
+    u.innerHTML = `📦 Último ZIP listo: ${esc(l.filtros)} (${l.total - l.errores} PDFs, pedido por ${l.esMio ? 'vos' : esc(l.usuario)}) — ` +
+                  `<a href="/api/ph/lote/zip">⬇ Descargar</a>`;
+    u.style.display = 'block';
+  } else {
+    u.style.display = 'none';
+  }
+}
+
+async function actualizarLote() {
+  try {
+    masiva.lote = await api('/api/ph/lote');
+  } catch (err) {
+    return;   // un fallo de red puntual: se reintenta en el próximo ciclo
+  }
+  pintarLote();
+  clearTimeout(masiva.timerEstado);
+  if (masiva.lote.estado === 'generando') masiva.timerEstado = setTimeout(actualizarLote, 1500);
+}
+
+async function generarLote() {
+  const g = $('mGenerar');
+  if (masiva.lote.estado === 'listo' && !masiva.formulario) {
+    window.location.href = '/api/ph/lote/zip';
+    return;
+  }
+  // Se bloquea en el mismo clic, antes de hablar con el servidor: un doble
+  // clic no puede mandar dos pedidos.
+  if (g.disabled) return;
+  g.disabled = true; g.dataset.enviando = '1'; g.textContent = 'Iniciando…';
+  try {
+    masiva.lote = await api(`/api/ph/${estado.maquina}/lote`, filtrosLote());
+    masiva.formulario = false;
+  } catch (err) {
+    if (err.datos && err.datos.lote) { masiva.lote = err.datos.lote; masiva.formulario = false; }
+    else { $('mConteo').className = 'conteo mal'; $('mConteo').textContent = err.message; }
+  } finally {
+    g.dataset.enviando = '';
+  }
+  pintarLote();
+  if (masiva.lote.estado === 'generando') actualizarLote();
+}
+
+async function cancelarLote() {
+  if (!confirm('¿Cancelar la generación? Lo generado hasta ahora se descarta.')) return;
+  try { masiva.lote = await api('/api/ph/lote/cancelar', {}); } catch (err) { alert(err.message); }
+  actualizarLote();
+}
+
+// Al abrir, el formulario arranca limpio (con la OP de la pantalla). Si hay
+// un lote generándose, pintarLote() igual lo bloquea y muestra el progreso.
+function abrirMasiva() {
+  masiva.formulario = true;
+  masiva.total = 0;
+  camposLote.forEach(id => $(id).value = '');
+  $('mOp').value = $('op').value.trim();
+  $('mMaquina').textContent = `Máquina ${$('maquina').selectedOptions[0] ? $('maquina').selectedOptions[0].textContent : ''} · completá al menos un filtro. Se genera un ZIP con un PDF por ensayo.`;
+  $('fondo').classList.add('abierto');
+  actualizarLote();
+  contar();
+}
+
+$('btnMasiva').addEventListener('click', abrirMasiva);
+$('mCerrar').addEventListener('click', () => $('fondo').classList.remove('abierto'));
+$('fondo').addEventListener('click', e => { if (e.target === $('fondo')) $('fondo').classList.remove('abierto'); });
+$('mGenerar').addEventListener('click', generarLote);
+$('mCancelar').addEventListener('click', cancelarLote);
+camposLote.forEach(id => $(id).addEventListener('input', contarDespues));
+
 // ---------- Eventos ----------
 
 const conAviso = fn => async (...args) => { try { await fn(...args); } catch (err) { mostrarError(err); } };
@@ -295,6 +531,8 @@ $('btnPdf').addEventListener('click', abrirPdf);
 // Arranque: respeta ?maquina=&op=&cano=&ensayo= para poder compartir un link.
 conAviso(async () => {
   const inicial = Object.fromEntries(new URLSearchParams(location.search));
+  api('/api/me').then(yo => { masiva.esAdmin = !!yo.esAdmin; pintarLote(); }).catch(() => {});
+  actualizarLote();
   await cargarMaquinas(inicial);
   await cargarOps();
   if (inicial.op) {

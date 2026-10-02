@@ -11,6 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "archiver": "^7.0.1",
     "chart.js": "^3.9.1",
     "chartjs-node-canvas": "^4.1.6",
     "chartjs-plugin-annotation": "^2.2.1",
