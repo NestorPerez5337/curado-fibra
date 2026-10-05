@@ -23,6 +23,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.set('trust proxy', 1);
 
 // ======================================================
+// ESTADO DEL SISTEMA: MEDICIÓN
+// ======================================================
+// Empieza a medir memoria/CPU y a guardar los últimos errores lo antes
+// posible, así también queda registrado lo que falle durante el arranque.
+// El panel (solo admin) se monta al final de este archivo; código en ./estado.
+
+require('./estado/sistema').iniciar();
+
+// ======================================================
 // MANEJO GLOBAL DE ERRORES
 // ======================================================
 
@@ -376,13 +385,33 @@ db.serialize(() => {
 // ======================================================
 // BACKUPS AUTOMÁTICOS
 // ======================================================
-// Guardan una copia de la base y de los PDFs en un volumen aparte
+// Guardan una copia de las bases (recetas_*.db y la del Monitor de
+// Variables, monitor_*.db) y de los PDFs en un volumen aparte
 // (backups_curado_fibra) para que, aunque algo le pase a los volumes
 // principales en una actualización, haya de dónde recuperar los datos.
 // Se generan solos cada 6 horas y también se pueden disparar a mano
 // (y descargar) desde la pantalla de Administración.
 
+const monitorAlmacen = require('./monitor/almacen');
+
 const BACKUPS_A_CONSERVAR = 28; // ~7 días si corre cada 6hs
+
+// Cada base se rota por separado: siempre quedan los últimos
+// BACKUPS_A_CONSERVAR de cada una.
+const PREFIJOS_BACKUP_DB = ['recetas_', 'monitor_'];
+
+function rotarBackups(prefijo) {
+
+    const carpeta = path.join(__dirname, 'backups');
+
+    const archivos = fs.readdirSync(carpeta)
+        .filter(n => n.startsWith(prefijo) && n.endsWith('.db'))
+        .sort();
+
+    while (archivos.length > BACKUPS_A_CONSERVAR) {
+        fs.unlinkSync(path.join(carpeta, archivos.shift()));
+    }
+}
 
 function timestampBackup() {
 
@@ -403,17 +432,44 @@ function hacerBackup() {
 
     return new Promise((resolve, reject) => {
 
-        const nombreDb = `recetas_${timestampBackup()}.db`;
+        const sello = timestampBackup();
+        const nombreDb = `recetas_${sello}.db`;
+        const nombreMonitor = `monitor_${sello}.db`;
         const rutaDb = path.join(__dirname, 'backups', nombreDb);
+        const rutaMonitor = path.join(__dirname, 'backups', nombreMonitor);
 
         // VACUUM INTO genera una copia consistente de la base aunque
         // esté siendo usada en simultáneo, a diferencia de copiar el
         // archivo .db directamente.
-        db.run(`VACUUM INTO ?`, [rutaDb], err => {
+        db.run(`VACUUM INTO ?`, [rutaDb], async err => {
 
             if (err) {
                 console.error('Error haciendo backup de la base:', err);
                 return reject(err);
+            }
+
+            // Base del Monitor de Variables. Si falla no se tira abajo el
+            // backup: la base principal ya quedó guardada, se deja el
+            // error en el log y se informa en el resultado.
+            let monitorGuardado = true;
+
+            const monitorYaExistia = fs.existsSync(rutaMonitor);
+
+            try {
+                await monitorAlmacen.respaldar(rutaMonitor);
+            } catch (errMonitor) {
+                monitorGuardado = false;
+                console.error('Error haciendo backup de la base del monitor:', errMonitor);
+
+                // Si quedó un archivo a medias lo sacamos para que no figure
+                // como un backup bueno (pero nunca borramos uno que ya estaba).
+                if (!monitorYaExistia) {
+                    try {
+                        fs.rmSync(rutaMonitor, { force: true });
+                    } catch {
+                        // no se pudo borrar: se queda como está
+                    }
+                }
             }
 
             // Copiamos al backup los PDFs que todavía no estén ahí
@@ -437,19 +493,20 @@ function hacerBackup() {
                     }
                 });
 
-                // Rotación: nos quedamos solo con los últimos N backups de la base
-                const backupsDb = fs.readdirSync(path.join(__dirname, 'backups'))
-                    .filter(n => n.startsWith('recetas_') && n.endsWith('.db'))
-                    .sort();
+                // Rotación: nos quedamos solo con los últimos N backups de cada base
+                PREFIJOS_BACKUP_DB.forEach(rotarBackups);
 
-                while (backupsDb.length > BACKUPS_A_CONSERVAR) {
-                    const viejo = backupsDb.shift();
-                    fs.unlinkSync(path.join(__dirname, 'backups', viejo));
-                }
+                console.log(
+                    `Backup generado: ${nombreDb}` +
+                    (monitorGuardado ? ` y ${nombreMonitor}` : ' (sin la base del monitor)') +
+                    ` (${copiados} PDF nuevos copiados)`
+                );
 
-                console.log(`Backup generado: ${nombreDb} (${copiados} PDF nuevos copiados)`);
-
-                resolve({ nombreDb, pdfsCopiados: copiados });
+                resolve({
+                    nombreDb,
+                    nombreMonitor: monitorGuardado ? nombreMonitor : null,
+                    pdfsCopiados: copiados
+                });
 
             } catch (err2) {
 
@@ -959,7 +1016,7 @@ app.get('/api/backups', requiereAdmin, (req, res) => {
         }
 
         const backups = archivos
-            .filter(a => a.startsWith('recetas_') && a.endsWith('.db'))
+            .filter(a => PREFIJOS_BACKUP_DB.some(p => a.startsWith(p)) && a.endsWith('.db'))
             .map(a => {
 
                 const stats = fs.statSync(path.join(carpeta, a));
@@ -967,7 +1024,8 @@ app.get('/api/backups', requiereAdmin, (req, res) => {
                 return {
                     archivo: a,
                     tamanioKb: Math.round(stats.size / 1024),
-                    fecha: stats.mtime.toISOString().slice(0, 19).replace('T', ' ')
+                    // Hora local (toISOString() la daba en UTC, 3 horas adelantada)
+                    fecha: ensayosDatos.fechaLocal(stats.mtime)
                 };
             })
             .sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -2160,6 +2218,15 @@ const MAX_MUESTRAS_ENSAYO = 1800;
 let enGracia = false;
 let tiempoApagado = null;
 
+// Cómo viene la comunicación con el PLC del ensayo (la lee el panel de
+// Estado del Sistema, así no hace falta abrirle otra conexión al PLC).
+const estadoPlcEnsayo = {
+    ultimaLecturaOk: null,
+    ultimoFallo: null,
+    mensajeFallo: null,
+    fallosSeguidos: 0
+};
+
 // ======================================================
 // MODBUS ENSAYO
 // ======================================================
@@ -2313,6 +2380,10 @@ setInterval(async () => {
 
     let socket = null;
 
+    // Para distinguir un fallo de comunicación con el PLC de cualquier otro
+    // error de este ciclo (ej.: el armado del PDF).
+    let leyoPlc = false;
+
     try {
 
         const conexion =
@@ -2328,6 +2399,10 @@ setInterval(async () => {
 
         const estado =
             await client.readCoils(12, 1);
+
+        leyoPlc = true;
+        estadoPlcEnsayo.ultimaLecturaOk = Date.now();
+        estadoPlcEnsayo.fallosSeguidos = 0;
 
         const ensayando =
             estado.response.body.values[0];
@@ -2447,6 +2522,12 @@ setInterval(async () => {
         }
 
     } catch (err) {
+
+        if (!leyoPlc) {
+            estadoPlcEnsayo.ultimoFallo = Date.now();
+            estadoPlcEnsayo.mensajeFallo = err.message;
+            estadoPlcEnsayo.fallosSeguidos++;
+        }
 
         console.error(
             'Error monitor ensayo:',
@@ -2584,6 +2665,13 @@ const clienteMqtt = mqtt.connect('mqtt://10.106.100.50:1883');
 // Estructura en memoria para guardar el último valor de cada máquina
 let ultimosHorometros = {};
 
+// Estado de la conexión al broker (lo lee el panel de Estado del Sistema)
+const estadoMqttHorometros = {
+    conectadoDesde: null,
+    caidoDesde: null,
+    ultimoMensaje: null
+};
+
 // Tope de seguridad: no hay una lista fija de máquinas válidas (se
 // descubren dinámicamente de lo que llega por MQTT), pero sin ningún
 // límite, cualquier dispositivo mal configurado que publique en este
@@ -2604,8 +2692,16 @@ db.serialize(() => {
 
 // Al conectarse al broker, nos suscribimos al tópico
 clienteMqtt.on('connect', () => {
+    estadoMqttHorometros.conectadoDesde = Date.now();
+    estadoMqttHorometros.caidoDesde = null;
     console.log('📡 Conectado exitosamente al Mosquitto en 10.106.100.50');
     clienteMqtt.subscribe('horometros2');
+});
+
+clienteMqtt.on('close', () => {
+    if (estadoMqttHorometros.caidoDesde === null) {
+        estadoMqttHorometros.caidoDesde = Date.now();
+    }
 });
 
 // Sin este listener, un error de conexión/reconexión al broker quedaba
@@ -2620,6 +2716,7 @@ clienteMqtt.on('error', err => {
 clienteMqtt.on('message', (topic, message) => {
     try {
         if (topic === 'horometros2') {
+            estadoMqttHorometros.ultimoMensaje = Date.now();
             // Parseamos el mensaje completo como un objeto JSON
             const payload = JSON.parse(message.toString());
             
@@ -2744,7 +2841,192 @@ require('./ph/rutas')(app, { requierePermiso, requierePermisoPagina });
 // MONITOR DE VARIABLES (código en ./monitor, solo administradores)
 // ======================================================
 
-require('./monitor/rutas')(app, { requiereAdmin, requiereAdminPagina, registrarLog });
+const monitorVariables = require('./monitor/rutas')(app, { requiereAdmin, requiereAdminPagina, registrarLog });
+
+// ======================================================
+// ESTADO DEL SISTEMA (código en ./estado, solo administradores)
+// ======================================================
+// Panel con la memoria, el disco y los backups del servidor, y si el
+// programa llega a los PLCs, los compresores, el SQL Server y el broker MQTT.
+
+const ensayosSql = require('./ensayos-sql');
+const phSql = require('./ph/sql');
+
+// "servidor\instancia (o :puerto) / base", sin credenciales
+function destinoSqlServer() {
+
+    if (!process.env.PH_SQL_SERVER) {
+        return null;
+    }
+
+    const instancia = process.env.PH_SQL_PORT
+        ? ':' + process.env.PH_SQL_PORT
+        : (process.env.PH_SQL_INSTANCE ? '\\' + process.env.PH_SQL_INSTANCE : '');
+
+    return `${process.env.PH_SQL_SERVER}${instancia} / ${process.env.PH_SQL_DATABASE || 'Automatizacion'}`;
+}
+
+function estadoPlcDelEnsayo() {
+
+    const { ultimaLecturaOk, mensajeFallo, fallosSeguidos } = estadoPlcEnsayo;
+
+    const ensayoEnCurso = ensayoActivo
+        ? ` Ensayo en curso: OP ${opActual}, caño ${canoActual}, ${datosEnsayo.length} muestras.`
+        : '';
+
+    if (ultimaLecturaOk === null && fallosSeguidos === 0) {
+        return { estado: 'esperando', detalle: 'Todavía no hubo ninguna lectura (recién arrancó el programa).' };
+    }
+
+    const sinRespuesta = fallosSeguidos >= 3 ||
+        (ultimaLecturaOk !== null && Date.now() - ultimaLecturaOk > 15 * 1000);
+
+    if (sinRespuesta) {
+        return {
+            estado: 'error',
+            detalle: `Sin respuesta (${fallosSeguidos} intentos seguidos)${mensajeFallo ? ': ' + mensajeFallo : ''}.${ensayoEnCurso}`
+        };
+    }
+
+    return { estado: 'ok', detalle: `Se lee cada 1 s sin problemas.${ensayoEnCurso}` };
+}
+
+function estadoMqttDeHorometros() {
+
+    if (clienteMqtt.connected) {
+
+        const ultimo = estadoMqttHorometros.ultimoMensaje;
+
+        return {
+            estado: 'ok',
+            detalle: ultimo
+                ? `Conectado. Último dato de horómetros: ${ensayosDatos.fechaLocal(new Date(ultimo))}.`
+                : 'Conectado. Todavía no llegó ningún dato de horómetros.'
+        };
+    }
+
+    const desde = estadoMqttHorometros.caidoDesde;
+
+    return {
+        estado: 'error',
+        detalle: desde ? `Desconectado desde ${ensayosDatos.fechaLocal(new Date(desde))}.` : 'Desconectado.'
+    };
+}
+
+function compresoresConIp() {
+
+    return new Promise((resolve, reject) => {
+
+        db.all(
+            `SELECT id, nombre, ip, puerto FROM compresores
+             WHERE activo = 1 AND ip IS NOT NULL AND TRIM(ip) <> '' ORDER BY nombre`,
+            [],
+            (err, filas) => err ? reject(err) : resolve(filas)
+        );
+    });
+}
+
+async function objetivosEstado() {
+
+    const objetivos = [];
+
+    // Varias devanadoras comparten el mismo PLC (misma IP): se prueba una vez.
+    const plcs = new Map();
+
+    for (const [dev, config] of Object.entries(CONFIG_PLCS)) {
+
+        const clave = `${config.ip}:${config.puerto}`;
+
+        if (!plcs.has(clave)) {
+            plcs.set(clave, { ip: config.ip, puerto: config.puerto, devs: [] });
+        }
+
+        plcs.get(clave).devs.push(dev);
+    }
+
+    for (const { ip, puerto, devs } of plcs.values()) {
+        objetivos.push({
+            grupo: 'PLCs',
+            nombre: `PLC de las devanadoras ${devs.join(', ')}`,
+            destino: `${ip}:${puerto}`,
+            tipo: 'tcp',
+            host: ip,
+            puerto
+        });
+    }
+
+    objetivos.push({
+        grupo: 'PLCs',
+        nombre: 'PLC del ensayo de presión',
+        destino: `${ENSAYO_IP}:${ENSAYO_PUERTO}`,
+        tipo: 'vivo',
+        critico: true,
+        leer: estadoPlcDelEnsayo
+    });
+
+    for (const c of await compresoresConIp()) {
+
+        const puerto = Number.isInteger(c.puerto) && c.puerto > 0 && c.puerto < 65536 ? c.puerto : 502;
+
+        objetivos.push({
+            grupo: 'Compresores',
+            nombre: c.nombre,
+            destino: `${c.ip.trim()}:${puerto}`,
+            tipo: 'tcp',
+            host: c.ip.trim(),
+            puerto
+        });
+    }
+
+    objetivos.push({
+        grupo: 'Horómetros',
+        nombre: 'Broker MQTT (Mosquitto)',
+        destino: '10.106.100.50:1883',
+        tipo: 'vivo',
+        critico: true,
+        leer: estadoMqttDeHorometros
+    });
+
+    objetivos.push({
+        grupo: 'Base de datos',
+        nombre: 'SQL Server: guardado de ensayos (escritura)',
+        destino: destinoSqlServer(),
+        tipo: 'sql',
+        critico: true,
+        configurado: ensayosSql.estaConfigurado,
+        faltante: 'Faltan las variables ENSAYOS_SQL_USER y ENSAYOS_SQL_PASSWORD (se cargan en Portainer): los ensayos quedan solo en la base local.',
+        probar: ensayosSql.probar
+    });
+
+    objetivos.push({
+        grupo: 'Base de datos',
+        nombre: 'SQL Server: Visor de Ensayos PH (lectura)',
+        destino: destinoSqlServer(),
+        tipo: 'sql',
+        configurado: phSql.estaConfigurado,
+        faltante: 'Falta la variable PH_SQL_PASSWORD (se carga en Portainer): el Visor de Ensayos PH no puede consultar.',
+        probar: async () => {
+
+            const pool = await phSql.obtenerPool();
+
+            const inicio = Date.now();
+
+            await pool.request().query('SELECT 1 AS ok');
+
+            return Date.now() - inicio;
+        }
+    });
+
+    return objetivos;
+}
+
+require('./estado/rutas')(app, {
+    requiereAdmin,
+    requiereAdminPagina,
+    listarObjetivos: objetivosEstado,
+    resumenEnsayos: () => ensayosDatos.resumenSincronizacion(),
+    resumenMonitor: () => monitorVariables.resumen()
+});
 
 app.listen(PORT, '0.0.0.0', () => {
 

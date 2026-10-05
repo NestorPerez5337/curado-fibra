@@ -232,6 +232,10 @@ module.exports = function crearEnsayosDatos({ db }) {
     // Nunca lanza error: lo que falle se loguea y queda para el próximo intento.
     let sincronizando = false;
 
+    // Qué pasó en la última vuelta de subida (lo muestra el panel de Estado
+    // del Sistema). Los tiempos son epoch en ms.
+    const estadoSync = { ultimoIntento: null, ultimoOk: null, ultimoError: null };
+
     async function sincronizar() {
 
         if (sincronizando || !ensayosSql.estaConfigurado()) {
@@ -239,6 +243,7 @@ module.exports = function crearEnsayosDatos({ db }) {
         }
 
         sincronizando = true;
+        estadoSync.ultimoIntento = Date.now();
 
         try {
 
@@ -273,7 +278,12 @@ module.exports = function crearEnsayosDatos({ db }) {
                 }
             }
 
+            estadoSync.ultimoOk = Date.now();
+            estadoSync.ultimoError = null;
+
         } catch (err) {
+
+            estadoSync.ultimoError = err.message;
 
             console.error('No se pudo guardar el ensayo en SQL Server (se reintenta solo):', err.message);
 
@@ -286,6 +296,27 @@ module.exports = function crearEnsayosDatos({ db }) {
     if (ensayosSql.estaConfigurado()) {
         setTimeout(sincronizar, 30 * 1000).unref();
         setInterval(sincronizar, 5 * 60 * 1000).unref();
+    }
+
+    // Cuántos ensayos están esperando subir a SQL Server y desde cuándo.
+    async function resumenSincronizacion() {
+
+        await tablaLista;
+
+        const fila = await consultarUno(
+            `SELECT COUNT(*) AS pendientes, MIN(fecha) AS masAntiguo
+             FROM ensayos_datos WHERE sincronizado = 0`
+        );
+
+        const total = await consultarUno(`SELECT COUNT(*) AS cantidad FROM ensayos_datos`);
+
+        return {
+            configurado: ensayosSql.estaConfigurado(),
+            total: total.cantidad,
+            pendientes: fila.pendientes,
+            masAntiguo: fila.masAntiguo,
+            ...estadoSync
+        };
     }
 
     async function listarEnsayos() {
@@ -398,6 +429,7 @@ module.exports = function crearEnsayosDatos({ db }) {
         guardarEnsayo,
         vincularArchivo,
         sincronizar,
+        resumenSincronizacion,
         generarPdfEnsayo,
         nombreArchivoPdf,
         fechaLocal,

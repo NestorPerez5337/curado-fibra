@@ -156,9 +156,10 @@
 <div class="panel">
     <h2>Backups</h2>
     <p style="font-size:13px; color:#aaa; margin-top:0;">
-        Se genera un backup automático de la base de datos y los PDFs cada 6 horas, en un lugar
-        separado de los datos principales. Se conservan los últimos 28. Para máxima seguridad,
-        descargá uno de vez en cuando y guardalo fuera del servidor.
+        Se genera un backup automático cada 6 horas, en un lugar separado de los datos principales:
+        la base principal (recetas_...), la del Monitor de Variables (monitor_...) y los PDFs.
+        De cada base se conservan los últimos 28. Para máxima seguridad, descargá uno de vez en
+        cuando y guardalo fuera del servidor.
     </p>
     <button class="btn-crear" onclick="crearBackup()">Generar backup ahora</button>
     <div id="msg-backup" class="msg"></div>

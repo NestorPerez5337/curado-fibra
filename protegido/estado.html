@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estado del Sistema</title>
+<style>
+    body { font-family: Arial, sans-serif; background:#121212; color:#eee; margin:0; padding:20px; }
+    a.volver { display:inline-block; margin-bottom:10px; color:#007bff; text-decoration:none; font-weight:bold; }
+    h1 { color:#007bff; margin:0; }
+    h2 { color:#007bff; font-size:16px; margin:0 0 12px; }
+    .encabezado { display:flex; justify-content:space-between; align-items:center; gap:15px; flex-wrap:wrap; max-width:1300px; margin:0 auto 15px; }
+    .encabezado .derecha { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .contenedor { max-width:1300px; margin:0 auto; }
+    .panel { background:#1f1f1f; border:1px solid #333; border-radius:8px; padding:18px; margin-bottom:18px; }
+    .grilla { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:18px; margin-bottom:18px; }
+    .grilla .panel { margin-bottom:0; }
+    button { padding:8px 15px; cursor:pointer; border:none; border-radius:4px; font-weight:bold; background:#007bff; color:white; }
+    button:disabled { opacity:.6; cursor:wait; }
+    select { padding:6px; background:#2a2a2a; color:white; border:1px solid #444; border-radius:4px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border:1px solid #333; padding:7px 8px; text-align:left; font-size:13px; vertical-align:top; }
+    th { background:#222; white-space:nowrap; }
+    .chip { display:inline-block; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:bold; white-space:nowrap; }
+    .chip.ok { background:#1e5a2e; color:#9be3b0; }
+    .chip.aviso { background:#6b4a10; color:#ffd58a; }
+    .chip.problema, .chip.error { background:#6b1f27; color:#ffb3ba; }
+    .chip.sin_configurar { background:#6b4a10; color:#ffd58a; }
+    .chip.esperando, .chip.info, .chip.neutro { background:#3a3a3a; color:#bbb; }
+    .chip.warn { background:#6b4a10; color:#ffd58a; }
+    .general { display:flex; align-items:center; gap:12px; padding:14px 18px; border-radius:8px; margin-bottom:12px; font-size:18px; font-weight:bold; }
+    .general.ok { background:#16351f; border:1px solid #1e5a2e; color:#9be3b0; }
+    .general.aviso { background:#3d2f0e; border:1px solid #6b4a10; color:#ffd58a; }
+    .general.problema { background:#3d1217; border:1px solid #6b1f27; color:#ffb3ba; }
+    .alerta { border-left:4px solid #555; background:#1a1a1a; padding:8px 12px; margin-bottom:8px; border-radius:0 4px 4px 0; }
+    .alerta.problema { border-left-color:#dc3545; }
+    .alerta.aviso { border-left-color:#ffc107; }
+    .alerta.info { border-left-color:#6c757d; }
+    .alerta b { display:block; }
+    .alerta span { color:#aaa; font-size:12px; }
+    .fila-barra { margin-bottom:12px; }
+    .fila-barra .etiqueta { display:flex; justify-content:space-between; gap:10px; font-size:13px; margin-bottom:4px; }
+    .fila-barra .etiqueta span:last-child { color:#aaa; text-align:right; }
+    .barra { height:10px; background:#2a2a2a; border-radius:5px; overflow:hidden; }
+    .barra .relleno { height:100%; background:#28a745; }
+    .barra .relleno.aviso { background:#ffc107; }
+    .barra .relleno.problema { background:#dc3545; }
+    .nota { color:#888; font-size:12px; margin-top:4px; }
+    .dato { display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-bottom:1px solid #2a2a2a; font-size:13px; }
+    .dato:last-child { border-bottom:none; }
+    .dato span:first-child { color:#aaa; }
+    .dato span:last-child { text-align:right; }
+    .dato .mal { color:#ff8a94; }
+    .dato .regular { color:#ffd58a; }
+    .graficos { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:18px; }
+    .grafico-caja { position:relative; height:240px; }
+    .grafico-titulo { font-size:13px; color:#aaa; margin-bottom:6px; }
+    .barra-superior { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+    .contenedor-tabla { overflow-x:auto; }
+    .msg { color:#dc3545; font-size:13px; min-height:16px; margin-bottom:8px; }
+    .error-texto { white-space:pre-wrap; word-break:break-word; font-family:Consolas, monospace; font-size:12px; color:#ddd; }
+    .vacio { color:#888; font-size:13px; }
+    a.enlace { color:#00bfff; }
+</style>
+<script src="/ph-assets/chart.min.js"></script>
+</head>
+<body>
+
+<div class="contenedor">
+
+<a class="volver" href="/">&larr; Volver al menú</a>
+
+<div class="encabezado">
+    <h1>Estado del Sistema</h1>
+    <div class="derecha">
+        <span id="actualizado" class="nota"></span>
+        <button id="btn-probar" onclick="probarAhora()">Probar conexiones ahora</button>
+    </div>
+</div>
+
+<div id="msg" class="msg"></div>
+
+<div id="resumen"></div>
+
+<div class="grilla">
+    <div class="panel">
+        <h2>Memoria</h2>
+        <div id="memoria"></div>
+    </div>
+    <div class="panel">
+        <h2>Procesador y respuesta del programa</h2>
+        <div id="cpu"></div>
+    </div>
+    <div class="panel">
+        <h2>Programa y servidor</h2>
+        <div id="tiempos"></div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="barra-superior">
+        <h2 style="margin:0;">Evolución</h2>
+        <div>
+            <label for="rango" style="color:#aaa; font-size:13px;">Período:</label>
+            <select id="rango" onchange="cambiarRango()">
+                <option value="1">Última hora</option>
+                <option value="6">Últimas 6 horas</option>
+                <option value="24">Últimas 24 horas</option>
+            </select>
+        </div>
+    </div>
+    <p class="nota" style="margin-top:0;">Se guarda en memoria desde que arrancó el programa: al reiniciarse, el historial vuelve a empezar. Una memoria que sube y sube sin bajar, o sockets que no paran de crecer, indican una pérdida (leak).</p>
+    <div class="graficos">
+        <div>
+            <div class="grafico-titulo">Memoria del programa (MB)</div>
+            <div class="grafico-caja"><canvas id="g-memoria"></canvas></div>
+        </div>
+        <div>
+            <div class="grafico-titulo">Procesador (%)</div>
+            <div class="grafico-caja"><canvas id="g-cpu"></canvas></div>
+        </div>
+        <div>
+            <div class="grafico-titulo">Conexiones TCP abiertas y pausa máxima del programa</div>
+            <div class="grafico-caja"><canvas id="g-sockets"></canvas></div>
+        </div>
+    </div>
+    <div id="msg-graficos" class="nota"></div>
+</div>
+
+<div class="panel">
+    <div class="barra-superior">
+        <h2 style="margin:0;">Conexiones</h2>
+        <span id="verificado" class="nota"></span>
+    </div>
+    <div class="contenedor-tabla">
+        <table>
+            <thead>
+                <tr>
+                    <th>Estado</th>
+                    <th>Grupo</th>
+                    <th>Equipo / servicio</th>
+                    <th>Dirección</th>
+                    <th>Respuesta</th>
+                    <th>Detalle</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-conexiones"></tbody>
+        </table>
+    </div>
+    <p class="nota">Los PLCs de las devanadoras y los compresores se prueban abriendo una conexión TCP (sin leer ni escribir nada). El PLC del ensayo y el broker MQTT ya tienen una conexión propia del programa y se informa su estado real, para no competirle al PLC. Solo se verifica mientras esta pantalla está abierta; para ver el historial de cortes usá el <a class="enlace" href="/monitor">Monitor de Variables</a>.</p>
+</div>
+
+<div class="grilla">
+    <div class="panel">
+        <h2>Disco</h2>
+        <div id="disco"></div>
+    </div>
+    <div class="panel">
+        <h2>Bases de datos y backups</h2>
+        <div id="backups"></div>
+    </div>
+    <div class="panel">
+        <h2>Ensayos de presión &rarr; SQL Server</h2>
+        <div id="ensayos"></div>
+    </div>
+    <div class="panel">
+        <h2>Monitor de Variables</h2>
+        <div id="monitor"></div>
+    </div>
+</div>
+
+<div class="panel">
+    <h2>Últimos errores del programa</h2>
+    <p class="nota" style="margin-top:0;">Lo que el programa escribió como error o advertencia desde que arrancó. Los mensajes iguales se agrupan y cuentan cuántas veces se repitieron.</p>
+    <div class="contenedor-tabla">
+        <table>
+            <thead>
+                <tr>
+                    <th>Última vez</th>
+                    <th>Nivel</th>
+                    <th>Veces</th>
+                    <th>Mensaje</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-errores"></tbody>
+        </table>
+    </div>
+</div>
+
+</div>
+
+<script>
+
+// Si la sesión venció, volvemos al login en vez de quedar con la pantalla rota
+(function () {
+    const fetchOriginal = window.fetch;
+    window.fetch = async function (...args) {
+        const res = await fetchOriginal(...args);
+        if (res.status === 401) {
+            window.location.href = '/';
+        }
+        return res;
+    };
+})();
+
+const $ = id => document.getElementById(id);
+
+const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const KB = 1024;
+const MB = KB * 1024;
+const GB = MB * 1024;
+
+function bytes(valor) {
+    if (valor === null || valor === undefined) return '—';
+    if (valor >= GB) return (valor / GB).toFixed(1) + ' GB';
+    if (valor >= MB) return Math.round(valor / MB) + ' MB';
+    return Math.round(valor / KB) + ' KB';
+}
+
+function duracion(segundos) {
+    segundos = Math.max(0, Math.floor(segundos));
+    const d = Math.floor(segundos / 86400);
+    const h = Math.floor(segundos % 86400 / 3600);
+    const m = Math.floor(segundos % 3600 / 60);
+    if (d) return `${d} d ${h} h`;
+    if (h) return `${h} h ${m} min`;
+    if (m) return `${m} min`;
+    return `${segundos} s`;
+}
+
+const fechaHora = ms => ms ? new Date(ms).toLocaleString('es-AR') : '—';
+const porcentaje = valor => valor === null || valor === undefined ? '—' : valor.toFixed(1) + ' %';
+
+// 'YYYY-MM-DD HH:MM:SS' (hora local del servidor) -> epoch
+const desdeFechaLocal = texto => texto ? new Date(texto.replace(' ', 'T')).getTime() : null;
+
+function nivelBarra(porc, aviso, problema) {
+    return porc >= problema ? 'problema' : porc >= aviso ? 'aviso' : '';
+}
+
+function barra(etiqueta, derecha, porc, aviso, problema) {
+    const p = Math.max(0, Math.min(100, porc || 0));
+    return `
+        <div class="fila-barra">
+            <div class="etiqueta"><span>${esc(etiqueta)}</span><span>${derecha}</span></div>
+            <div class="barra"><div class="relleno ${nivelBarra(p, aviso, problema)}" style="width:${p.toFixed(1)}%"></div></div>
+        </div>`;
+}
+
+const dato = (nombre, valor, clase, sangria) =>
+    `<div class="dato"><span${sangria ? ' style="padding-left:16px;"' : ''}>${esc(nombre)}</span><span class="${clase || ''}">${valor}</span></div>`;
+
+let estado = null;
+
+// ------------------------------------------------------
+// RENDER
+// ------------------------------------------------------
+
+function renderResumen(e) {
+
+    const titulos = {
+        ok: 'Todo en orden',
+        aviso: 'Hay avisos para revisar',
+        problema: 'Hay problemas que atender'
+    };
+
+    const iconos = { ok: '✅', aviso: '⚠️', problema: '🛑' };
+
+    const alertas = e.alertas.map(a => `
+        <div class="alerta ${a.nivel}">
+            <b>${esc(a.titulo)}</b>
+            ${a.detalle ? `<span>${esc(a.detalle)}</span>` : ''}
+        </div>`).join('');
+
+    $('resumen').innerHTML = `
+        <div class="general ${e.general}">${iconos[e.general]} ${titulos[e.general]}</div>
+        ${alertas}`;
+}
+
+function renderMemoria(e) {
+
+    const s = e.servidor;
+    const m = s.memoria;
+    const c = s.contenedor;
+    const maq = s.maquina;
+
+    // Programa: contra el límite del contenedor si tiene uno, si no contra la máquina
+    const referencia = c && c.limiteBytes ? c.limiteBytes : maq.totalBytes;
+    const nombreRef = c && c.limiteBytes ? 'límite del contenedor' : 'memoria del servidor';
+
+    let html = barra(
+        'Programa (Node.js)',
+        `${bytes(m.rss)} de ${bytes(referencia)} <small>(${nombreRef})</small>`,
+        m.rss / referencia * 100, 60, 80
+    );
+
+    if (c) {
+        html += barra(
+            'Contenedor Docker',
+            c.limiteBytes
+                ? `${bytes(c.usoBytes)} de ${bytes(c.limiteBytes)}`
+                : `${bytes(c.usoBytes)} <small>(sin límite configurado)</small>`,
+            c.usoBytes / (c.limiteBytes || maq.totalBytes) * 100, 80, 90
+        );
+    }
+
+    const usadaMaquina = maq.totalBytes - maq.libreBytes;
+
+    html += barra(
+        'Servidor completo',
+        `${bytes(usadaMaquina)} de ${bytes(maq.totalBytes)}`,
+        usadaMaquina / maq.totalBytes * 100, 85, 95
+    );
+
+    const variacion = m.variacionRss1h;
+
+    html += dato('Heap de JavaScript (usado / reservado)', `${bytes(m.heapUsado)} / ${bytes(m.heapTotal)}`);
+    html += dato('Buffers y memoria nativa', bytes(m.externa));
+    html += dato('Cambio en la última hora',
+        variacion === null ? '<small>(todavía no hay 30 min de datos)</small>'
+            : `${variacion >= 0 ? '+' : '−'}${bytes(Math.abs(variacion))}`,
+        variacion !== null && variacion > 100 * MB ? 'mal' : variacion !== null && variacion > 30 * MB ? 'regular' : '');
+    html += dato('Pico desde que arrancó (hasta 24 h)', bytes(m.picoRss24h));
+
+    if (!c) {
+        html += `<div class="nota">No se pudo leer la memoria del contenedor (el programa no corre dentro de Docker en Linux).</div>`;
+    }
+
+    $('memoria').innerHTML = html;
+}
+
+function renderCpu(e) {
+
+    const s = e.servidor;
+    const nucleos = s.maquina.nucleos;
+    const lag = s.eventLoop;
+
+    let html = '';
+
+    html += barra('Programa', `${porcentaje(s.cpu.proceso)} <small>(100 % = un núcleo)</small>`,
+        s.cpu.proceso === null ? 0 : s.cpu.proceso / nucleos, 60, 85);
+
+    html += barra('Servidor completo', `${porcentaje(s.cpu.servidor)} <small>(${nucleos} núcleos)</small>`,
+        s.cpu.servidor || 0, 70, 90);
+
+    if (s.maquina.cargaPromedio) {
+        html += dato('Carga promedio (1 / 5 / 15 min)', s.maquina.cargaPromedio.map(v => v.toFixed(2)).join(' / '));
+    }
+
+    const pausa = lag.max;
+
+    html += dato('Pausa promedio del programa', lag.medio === null ? '—' : `${lag.medio.toFixed(1)} ms`);
+    html += dato('Pausa máxima (últimos 15 s)', pausa === null ? '—' : `${Math.round(pausa)} ms`,
+        pausa !== null && pausa >= 1000 ? 'mal' : pausa !== null && pausa >= 250 ? 'regular' : '');
+
+    html += `<div class="nota">La "pausa" mide cuánto se demora el programa en atender lo que tiene pendiente (lecturas de PLC, pantallas). Cerca de 0 ms es lo normal; valores altos y sostenidos indican que está sobrecargado.</div>`;
+
+    $('cpu').innerHTML = html;
+}
+
+function renderTiempos(e) {
+
+    const s = e.servidor;
+
+    $('tiempos').innerHTML =
+        dato('El programa arrancó', `${fechaHora(s.arranque)} <small>(hace ${duracion(s.uptimeProgramaS)})</small>`,
+            s.uptimeProgramaS < 600 ? 'regular' : '') +
+        dato('El servidor está encendido hace', duracion(s.uptimeServidorS)) +
+        dato('Hora del servidor', `${fechaHora(s.horaServidor)} <small>(${esc(s.zonaHoraria)})</small>`) +
+        dato('Conexiones TCP abiertas del programa', s.recursos.sockets === null ? '—' : s.recursos.sockets) +
+        dato('Temporizadores activos', s.recursos.timers === null ? '—' : s.recursos.timers) +
+        dato('Sesiones abiertas (usuarios logueados)', e.sesiones === null ? '—' : e.sesiones) +
+        dato('Node.js', esc(s.nodeVersion)) +
+        dato('Sistema', esc(s.plataforma)) +
+        dato('Proceso (PID)', s.pid);
+}
+
+const ETIQUETAS_ESTADO = {
+    ok: 'Conectado',
+    error: 'Sin conexión',
+    sin_configurar: 'Sin configurar',
+    esperando: 'Esperando'
+};
+
+function renderConexiones(e) {
+
+    const c = e.conexiones;
+
+    if (!c.momento) {
+        $('tabla-conexiones').innerHTML = '<tr><td colspan="6" class="vacio">Verificando conexiones…</td></tr>';
+        $('verificado').textContent = '';
+        return;
+    }
+
+    $('verificado').textContent = `Verificado hace ${duracion((e.generado - c.momento) / 1000)}`;
+
+    $('tabla-conexiones').innerHTML = c.resultados.map(r => `
+        <tr>
+            <td><span class="chip ${r.estado}">${ETIQUETAS_ESTADO[r.estado] || esc(r.estado)}</span></td>
+            <td>${esc(r.grupo)}</td>
+            <td>${esc(r.nombre)}</td>
+            <td>${esc(r.destino || '—')}</td>
+            <td>${r.latencia_ms === undefined || r.latencia_ms === null ? '—' : r.latencia_ms + ' ms'}</td>
+            <td>${esc(r.detalle || '')}</td>
+        </tr>`).join('');
+}
+
+function renderDisco(e) {
+
+    const d = e.disco;
+
+    if (!d) {
+        $('disco').innerHTML = '<div class="vacio">No se pudo leer el estado del disco.</div>';
+        return;
+    }
+
+    // Las carpetas que están en el mismo disco comparten una sola barra
+    const discos = new Map();
+
+    for (const v of d.volumenes) {
+
+        const clave = v.totalBytes === null ? 'sin-datos-' + v.clave : `${v.totalBytes}:${v.libreBytes}`;
+
+        if (!discos.has(clave)) {
+            discos.set(clave, []);
+        }
+
+        discos.get(clave).push(v);
+    }
+
+    $('disco').innerHTML = [...discos.values()].map(carpetas => {
+
+        const v = carpetas[0];
+
+        const detalle = carpetas.map(c => dato(c.nombre, `${bytes(c.bytes)} <small>(${c.archivos} archivos)</small>`)).join('');
+
+        if (v.totalBytes === null) {
+            return `<div class="fila-barra"><div class="etiqueta"><span>${esc(v.nombre)}</span><span>sin datos</span></div></div>${detalle}`;
+        }
+
+        const usado = (v.totalBytes - v.libreBytes) / v.totalBytes * 100;
+
+        return barra(
+            carpetas.length > 1 ? 'Disco compartido' : v.nombre,
+            `libres ${bytes(v.libreBytes)} de ${bytes(v.totalBytes)}`,
+            usado, 85, 95
+        ) + detalle;
+
+    }).join('');
+}
+
+function textoBackup(info, generado) {
+
+    if (!info.ultimo) {
+        return '<span class="mal">todavía no hay</span>';
+    }
+
+    const edad = (generado - info.ultimo) / 1000;
+    const clase = edad > 24 * 3600 ? 'mal' : edad > 8 * 3600 ? 'regular' : '';
+
+    return `<span class="${clase}">${fechaHora(info.ultimo)} (hace ${duracion(edad)})</span>`;
+}
+
+function renderBackups(e) {
+
+    const d = e.disco;
+
+    if (!d) {
+        $('backups').innerHTML = '<div class="vacio">No se pudo leer el estado de los backups.</div>';
+        return;
+    }
+
+    $('backups').innerHTML =
+        dato('Base principal (recetas.db)', bytes(d.bases.recetasBytes)) +
+        dato('Último backup', textoBackup(d.backups.recetas, e.generado), '', true) +
+        dato('Backups guardados', d.backups.recetas.cantidad, '', true) +
+        dato('Base del Monitor (monitor.db)', bytes(d.bases.monitorBytes)) +
+        dato('Último backup', textoBackup(d.backups.monitor, e.generado), '', true) +
+        dato('Backups guardados', d.backups.monitor.cantidad, '', true) +
+        dato('PDFs de ensayos', `${d.pdfs.cantidad} <small>(${d.pdfs.respaldados} con copia en backups)</small>`,
+            d.pdfs.respaldados < d.pdfs.cantidad ? 'regular' : '') +
+        `<div class="nota">Los backups se hacen solos cada 6 horas y se pueden generar y descargar a mano desde <a class="enlace" href="/admin">Administración</a>.</div>`;
+}
+
+function renderEnsayos(e) {
+
+    const n = e.ensayos;
+
+    if (!n) {
+        $('ensayos').innerHTML = '<div class="vacio">No se pudo leer el estado de los ensayos.</div>';
+        return;
+    }
+
+    const pendientesClase = n.pendientes > 0 ? 'regular' : '';
+
+    $('ensayos').innerHTML =
+        dato('Subida a SQL Server', n.configurado ? '<span class="chip ok">Configurada</span>' : '<span class="chip aviso">Sin configurar</span>') +
+        dato('Ensayos guardados en la base local', n.total) +
+        dato('Pendientes de subir', n.pendientes, pendientesClase) +
+        dato('El más viejo pendiente', n.masAntiguo ? esc(n.masAntiguo) : '—', pendientesClase) +
+        dato('Último intento de subida', fechaHora(n.ultimoIntento)) +
+        dato('Última subida completa', fechaHora(n.ultimoOk)) +
+        dato('Último error', n.ultimoError ? esc(n.ultimoError) : '—', n.ultimoError ? 'mal' : '') +
+        `<div class="nota">Cada ensayo se guarda primero en la base local y después se sube; si el SQL Server no responde queda pendiente y se reintenta solo cada 5 minutos.</div>`;
+}
+
+const ETIQUETAS_EVENTO = {
+    cambio: 'Cambios de valor',
+    conexion_perdida: 'Conexiones perdidas',
+    sin_datos: 'Sin datos',
+    error_lectura: 'Errores de lectura',
+    restablecida: 'Restablecidas'
+};
+
+function renderMonitor(e) {
+
+    const m = e.monitor;
+
+    if (!m) {
+        $('monitor').innerHTML = '<div class="vacio">No se pudo leer el estado del Monitor.</div>';
+        return;
+    }
+
+    if (m.total === 0) {
+        $('monitor').innerHTML = '<div class="vacio">Todavía no hay variables cargadas. <a class="enlace" href="/monitor">Abrir el Monitor</a></div>';
+        return;
+    }
+
+    const ok = m.porEstado.ok || 0;
+
+    let html =
+        dato('Variables (activas / total)', `${m.activas} / ${m.total}`) +
+        dato('Funcionando bien', `${ok} de ${m.activas}`, ok < m.activas ? 'regular' : '');
+
+    if (m.conProblema.length) {
+
+        html += m.conProblema.map(v =>
+            dato(esc(v.nombre), `<span class="chip error">${esc(v.estado.replace('_', ' '))}</span>` +
+                (v.desde ? ` <small>desde ${esc(v.desde)}</small>` : ''))
+        ).join('');
+    }
+
+    const eventos = Object.entries(m.eventos24h);
+
+    html += dato('Novedades en las últimas 24 h',
+        eventos.length
+            ? eventos.map(([tipo, cantidad]) => `${esc(ETIQUETAS_EVENTO[tipo] || tipo)}: ${cantidad}`).join('<br>')
+            : 'ninguna');
+
+    html += dato('Eventos guardados en total', m.totalEventos);
+    html += `<div class="nota"><a class="enlace" href="/monitor">Abrir el Monitor de Variables</a></div>`;
+
+    $('monitor').innerHTML = html;
+}
+
+function renderErrores(e) {
+
+    if (!e.errores.length) {
+        $('tabla-errores').innerHTML = '<tr><td colspan="4" class="vacio">El programa no registró errores desde que arrancó.</td></tr>';
+        return;
+    }
+
+    $('tabla-errores').innerHTML = e.errores.map(x => `
+        <tr>
+            <td style="white-space:nowrap;">${fechaHora(x.ultima)}</td>
+            <td><span class="chip ${x.nivel === 'error' ? 'error' : 'warn'}">${x.nivel === 'error' ? 'Error' : 'Aviso'}</span></td>
+            <td>${x.veces}</td>
+            <td class="error-texto">${esc(x.mensaje)}</td>
+        </tr>`).join('');
+}
+
+function render(e) {
+
+    estado = e;
+
+    renderResumen(e);
+    renderMemoria(e);
+    renderCpu(e);
+    renderTiempos(e);
+    renderConexiones(e);
+    renderDisco(e);
+    renderBackups(e);
+    renderEnsayos(e);
+    renderMonitor(e);
+    renderErrores(e);
+
+    $('actualizado').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR');
+}
+
+// ------------------------------------------------------
+// CARGA DE DATOS
+// ------------------------------------------------------
+
+let cargando = false;
+let verificando = false;
+
+async function cargarRapido() {
+
+    if (cargando) return;
+    cargando = true;
+
+    try {
+
+        const res = await fetch('/api/estado');
+
+        if (!res.ok) throw new Error();
+
+        $('msg').textContent = '';
+        render(await res.json());
+
+    } catch {
+
+        $('msg').textContent = 'No se pudo leer el estado del servidor (¿se está reiniciando?). Se reintenta solo.';
+
+    } finally {
+
+        cargando = false;
+    }
+}
+
+async function verificarConexiones(forzar) {
+
+    if (verificando) return;
+    verificando = true;
+
+    const boton = $('btn-probar');
+    boton.disabled = true;
+    boton.textContent = 'Probando…';
+
+    try {
+
+        const res = await fetch('/api/estado/conexiones' + (forzar ? '?forzar=1' : ''));
+
+        if (!res.ok) throw new Error();
+
+        $('msg').textContent = '';
+        render(await res.json());
+
+    } catch {
+
+        $('msg').textContent = 'No se pudieron verificar las conexiones. Se reintenta solo.';
+
+    } finally {
+
+        verificando = false;
+        boton.disabled = false;
+        boton.textContent = 'Probar conexiones ahora';
+    }
+}
+
+function probarAhora() {
+    verificarConexiones(true);
+}
+
+// ------------------------------------------------------
+// GRÁFICOS
+// ------------------------------------------------------
+
+const graficos = {};
+
+function crearGrafico(idCanvas, datasets, ejes) {
+
+    const escala = extra => ({
+        ticks: { color: '#aaa' },
+        grid: { color: '#2a2a2a' },
+        beginAtZero: true,
+        ...extra
+    });
+
+    return new Chart($(idCanvas), {
+        type: 'line',
+        data: { labels: [], datasets },
+        options: {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { color: '#ccc' } } },
+            scales: {
+                x: { ticks: { color: '#aaa', maxTicksLimit: 8 }, grid: { color: '#2a2a2a' } },
+                y: escala(ejes && ejes.y),
+                ...(ejes && ejes.y1 ? { y1: escala({ position: 'right', grid: { drawOnChartArea: false }, ...ejes.y1 }) } : {})
+            }
+        }
+    });
+}
+
+const serie = (etiqueta, color, extra) => ({
+    label: etiqueta,
+    data: [],
+    borderColor: color,
+    backgroundColor: color,
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.2,
+    spanGaps: true,
+    ...extra
+});
+
+function iniciarGraficos() {
+
+    if (typeof Chart === 'undefined') {
+        $('msg-graficos').textContent = 'No se pudo cargar la librería de gráficos.';
+        return false;
+    }
+
+    graficos.memoria = crearGrafico('g-memoria', [
+        serie('Memoria del programa', '#00bfff'),
+        serie('Heap de JS usado', '#ffc107')
+    ]);
+
+    graficos.cpu = crearGrafico('g-cpu', [
+        serie('Programa', '#00bfff'),
+        serie('Servidor completo', '#6c757d')
+    ], { y: { suggestedMax: 100 } });
+
+    graficos.sockets = crearGrafico('g-sockets', [
+        serie('Conexiones TCP abiertas', '#28a745', { yAxisID: 'y' }),
+        serie('Pausa máxima (ms)', '#dc3545', { yAxisID: 'y1' })
+    ], { y1: {} });
+
+    return true;
+}
+
+async function cargarHistorial() {
+
+    if (!graficos.memoria) return;
+
+    const horas = parseInt($('rango').value, 10);
+
+    try {
+
+        const res = await fetch('/api/estado/historial?horas=' + horas);
+
+        if (!res.ok) throw new Error();
+
+        const h = await res.json();
+
+        const etiquetas = h.t.map(t => {
+            const f = new Date(t);
+            // con 1 hora se ven los segundos (si no, muchos puntos seguidos repiten la misma hora)
+            const hora = f.toLocaleTimeString('es-AR', horas === 1
+                ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
+                : { hour: '2-digit', minute: '2-digit', hour12: false });
+            return horas === 24 ? f.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + hora : hora;
+        });
+
+        const cargar = (grafico, ...columnas) => {
+            grafico.data.labels = etiquetas;
+            columnas.forEach((columna, i) => { grafico.data.datasets[i].data = columna; });
+            grafico.update('none');
+        };
+
+        cargar(graficos.memoria, h.rss.map(v => v === null ? null : v / MB), h.heapUsado.map(v => v === null ? null : v / MB));
+        cargar(graficos.cpu, h.cpuProceso, h.cpuServidor);
+        cargar(graficos.sockets, h.sockets, h.lagMax);
+
+        $('msg-graficos').textContent = h.t.length < 2 ? 'Todavía no hay suficientes datos: se toma una muestra cada 15 segundos.' : '';
+
+    } catch {
+
+        $('msg-graficos').textContent = 'No se pudo cargar el historial.';
+    }
+}
+
+function cambiarRango() {
+    cargarHistorial();
+}
+
+// ------------------------------------------------------
+// ARRANQUE Y REFRESCO AUTOMÁTICO (se pausa si la pestaña no se ve)
+// ------------------------------------------------------
+
+iniciarGraficos();
+
+cargarRapido().then(() => verificarConexiones(false));
+cargarHistorial();
+
+setInterval(() => { if (!document.hidden) cargarRapido(); }, 5000);
+setInterval(() => { if (!document.hidden) verificarConexiones(false); }, 15000);
+setInterval(() => { if (!document.hidden) cargarHistorial(); }, 30000);
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        cargarRapido();
+        cargarHistorial();
+    }
+});
+
+</script>
+
+</body>
+</html>
