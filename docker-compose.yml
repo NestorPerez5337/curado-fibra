@@ -31,6 +31,13 @@ services:
       PH_SQL_DATABASE: ${PH_SQL_DATABASE:-Automatizacion}
       PH_SQL_USER: ${PH_SQL_USER:-portal_lectura}
       PH_SQL_PASSWORD: ${PH_SQL_PASSWORD:-}
+      # Guardado de los ensayos de presión (SQL Server, con escritura). Usa el
+      # mismo servidor y base de arriba. La contraseña NO va acá: se carga en
+      # Portainer -> Stacks -> curado-fibra -> Environment variables, con el
+      # nombre ENSAYOS_SQL_PASSWORD. Sin estas variables los ensayos se guardan
+      # igual en la base local y quedan pendientes de subir.
+      ENSAYOS_SQL_USER: ${ENSAYOS_SQL_USER:-}
+      ENSAYOS_SQL_PASSWORD: ${ENSAYOS_SQL_PASSWORD:-}
 
 volumes:
   datos_curado_fibra:

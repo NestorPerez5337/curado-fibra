@@ -46,7 +46,76 @@ a{
     color:#00bfff;
 }
 
+.acciones{
+    white-space:nowrap;
+}
+
+.acciones button, .acciones a{
+    margin-right:8px;
+}
+
+.btn-pdf{
+    background:#28a745;
+    color:white;
+    border:none;
+    border-radius:4px;
+    font-weight:bold;
+}
+
+.btn-pdf:disabled{
+    opacity:.6;
+    cursor:wait;
+}
+
+.btn-grafico{
+    background:#007bff;
+    color:white;
+    border:none;
+    border-radius:4px;
+    font-weight:bold;
+}
+
+#panel-grafico{
+    display:none;
+    background:#1b1b1b;
+    border:1px solid #333;
+    border-radius:8px;
+    padding:15px;
+    margin-top:20px;
+}
+
+#panel-grafico .cabecera{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+}
+
+#grafico-info{
+    margin:10px 0;
+    color:#bbb;
+    font-size:14px;
+}
+
+#grafico-info span{
+    margin-right:18px;
+}
+
+#grafico-contenedor{
+    position:relative;
+    height:380px;
+}
+
+#msg{
+    margin-top:10px;
+    color:#dc3545;
+    font-size:14px;
+}
+
 </style>
+
+<script src="/ph-assets/chart.min.js"></script>
 
 </head>
 
@@ -70,6 +139,26 @@ a{
 
 </div>
 
+<div id="msg"></div>
+
+<div id="panel-grafico">
+
+    <div class="cabecera">
+        <strong id="grafico-titulo"></strong>
+        <span>
+            <button id="btn-grafico-pdf" class="btn-pdf" onclick="descargarPdf(ensayoAbierto, this)">Generar PDF</button>
+            <button onclick="cerrarGrafico()">Cerrar</button>
+        </span>
+    </div>
+
+    <div id="grafico-info"></div>
+
+    <div id="grafico-contenedor">
+        <canvas id="grafico"></canvas>
+    </div>
+
+</div>
+
 <table>
 
 <thead>
@@ -77,7 +166,8 @@ a{
     <th>Fecha</th>
     <th>OP</th>
     <th>Caño</th>
-    <th>PDF</th>
+    <th>Muestras</th>
+    <th>Acciones</th>
 </tr>
 </thead>
 
@@ -102,14 +192,78 @@ a{
 })();
 
 let ensayos = [];
+let ensayoAbierto = null;
+let grafico = null;
+
+function esc(valor){
+    return String(valor === null || valor === undefined ? '' : valor)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function mostrarMensaje(texto){
+    document.getElementById('msg').innerText = texto || '';
+}
 
 async function cargarEnsayos(){
 
-    const res =
-        await fetch('/api/ensayos');
+    mostrarMensaje('');
 
-    ensayos =
-        await res.json();
+    // PDFs que hay en la carpeta (todos los ensayos, incluso los viejos)
+    // y ensayos con las muestras guardadas en la base (los nuevos).
+    const [resArchivos, resDatos] = await Promise.all([
+        fetch('/api/ensayos'),
+        fetch('/api/ensayos-datos')
+    ]);
+
+    const archivos = resArchivos.ok ? await resArchivos.json() : [];
+    const datos = resDatos.ok ? await resDatos.json() : [];
+
+    if (!resArchivos.ok || !resDatos.ok) {
+        mostrarMensaje('No se pudo cargar una parte del listado de ensayos.');
+    }
+
+    const datosPorArchivo = new Map(
+        datos.filter(d => d.archivo).map(d => [d.archivo, d])
+    );
+
+    const idsUsados = new Set();
+
+    const filas = archivos.map(a => {
+
+        const d = datosPorArchivo.get(a.archivo);
+
+        if (d) {
+            idsUsados.add(d.id);
+        }
+
+        return {
+            fecha: d ? d.fecha : a.fecha,
+            op: a.op,
+            cano: a.cano,
+            archivo: a.archivo,
+            datosId: d ? d.id : null,
+            cantidad: d ? d.cantidad : null
+        };
+    });
+
+    // Ensayos guardados cuyo PDF no existe (falló al generarse o se borró)
+    datos.filter(d => !idsUsados.has(d.id)).forEach(d => {
+        filas.push({
+            fecha: d.fecha,
+            op: d.op,
+            cano: d.cano,
+            archivo: null,
+            datosId: d.id,
+            cantidad: d.cantidad
+        });
+    });
+
+    filas.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+    ensayos = filas;
 
     mostrar(ensayos);
 }
@@ -119,24 +273,29 @@ function mostrar(lista){
     const tabla =
         document.getElementById('tabla');
 
-    tabla.innerHTML = '';
+    tabla.innerHTML = lista.map(e => {
 
-    lista.forEach(e=>{
+        const acciones = [];
 
-        tabla.innerHTML += `
+        if (e.datosId !== null) {
+            acciones.push(`<button class="btn-grafico" onclick="verGrafico(${e.datosId})">Ver gráfico</button>`);
+            acciones.push(`<button class="btn-pdf" onclick="descargarPdf(${e.datosId}, this)">Generar PDF</button>`);
+        }
+
+        if (e.archivo) {
+            acciones.push(`<a href="/pdfs/${encodeURIComponent(e.archivo)}" target="_blank">Abrir PDF</a>`);
+        }
+
+        return `
         <tr>
-            <td>${e.fecha}</td>
-            <td>${e.op}</td>
-            <td>${e.cano}</td>
-            <td>
-                <a href="/pdfs/${e.archivo}"
-                   target="_blank">
-                    Abrir PDF
-                </a>
-            </td>
+            <td>${esc(e.fecha)}</td>
+            <td>${esc(e.op)}</td>
+            <td>${esc(e.cano)}</td>
+            <td>${e.cantidad === null ? '-' : esc(e.cantidad)}</td>
+            <td class="acciones">${acciones.join('')}</td>
         </tr>
         `;
-    });
+    }).join('');
 }
 
 function buscar(){
@@ -184,6 +343,139 @@ function buscar(){
         });
 
     mostrar(filtrado);
+}
+
+async function verGrafico(id){
+
+    mostrarMensaje('');
+
+    const res = await fetch('/api/ensayos-datos/' + id);
+
+    if (!res.ok) {
+        mostrarMensaje('No se pudieron cargar los datos del ensayo.');
+        return;
+    }
+
+    const ensayo = await res.json();
+    const muestras = ensayo.muestras;
+
+    ensayoAbierto = id;
+
+    const maximo = Math.max(...muestras);
+    const minimo = Math.min(...muestras);
+    const promedio = muestras.reduce((a, b) => a + b, 0) / muestras.length;
+
+    document.getElementById('grafico-titulo').innerText =
+        `Ensayo OP ${ensayo.op} - Caño ${ensayo.cano}`;
+
+    document.getElementById('grafico-info').innerHTML = `
+        <span>Fecha: <b>${esc(ensayo.fecha)}</b></span>
+        <span>Muestras: <b>${muestras.length}</b></span>
+        <span>Máx: <b>${maximo}</b></span>
+        <span>Mín: <b>${minimo}</b></span>
+        <span>Promedio: <b>${promedio.toFixed(1)}</b></span>
+    `;
+
+    document.getElementById('panel-grafico').style.display = 'block';
+
+    if (grafico) {
+        grafico.destroy();
+    }
+
+    grafico = new Chart(document.getElementById('grafico'), {
+        type: 'line',
+        data: {
+            labels: muestras.map((_, i) => i),
+            datasets: [{
+                label: 'Presión',
+                data: muestras,
+                borderColor: '#00bfff',
+                backgroundColor: '#00bfff',
+                borderWidth: 2,
+                tension: 0.1,
+                pointRadius: muestras.length > 150 ? 0 : 3
+            }]
+        },
+        options: {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Tiempo (s)', color: '#ccc' },
+                    ticks: { color: '#ccc', maxTicksLimit: 20 },
+                    grid: { color: '#333' }
+                },
+                y: {
+                    title: { display: true, text: 'Presión', color: '#ccc' },
+                    ticks: { color: '#ccc' },
+                    grid: { color: '#333' }
+                }
+            }
+        }
+    });
+
+    document.getElementById('panel-grafico').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cerrarGrafico(){
+
+    document.getElementById('panel-grafico').style.display = 'none';
+
+    if (grafico) {
+        grafico.destroy();
+        grafico = null;
+    }
+
+    ensayoAbierto = null;
+}
+
+async function descargarPdf(id, boton){
+
+    if (id === null || id === undefined) {
+        return;
+    }
+
+    mostrarMensaje('');
+
+    const textoOriginal = boton.innerText;
+    boton.disabled = true;
+    boton.innerText = 'Generando...';
+
+    try {
+
+        const res = await fetch('/api/ensayos-datos/' + id + '/pdf');
+
+        if (!res.ok) {
+            mostrarMensaje('No se pudo generar el PDF: ' + await res.text());
+            return;
+        }
+
+        const disposicion = res.headers.get('Content-Disposition') || '';
+        const coincidencia = disposicion.match(/filename="([^"]+)"/);
+
+        const url = URL.createObjectURL(await res.blob());
+
+        const enlace = document.createElement('a');
+        enlace.href = url;
+        enlace.download = coincidencia ? coincidencia[1] : 'ensayo.pdf';
+        document.body.appendChild(enlace);
+        enlace.click();
+        enlace.remove();
+
+        URL.revokeObjectURL(url);
+
+    } catch (err) {
+
+        mostrarMensaje('No se pudo generar el PDF.');
+
+    } finally {
+
+        boton.disabled = false;
+        boton.innerText = textoOriginal;
+    }
 }
 
 cargarEnsayos();
