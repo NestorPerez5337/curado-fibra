@@ -2,14 +2,13 @@
 // CONEXIÓN A SQL SERVER (ENSAYOS PH, SOLO LECTURA)
 // ======================================================
 //
-// La conexión se abre recién la primera vez que alguien usa el visor, no
-// al arrancar la app: si el SQL Server no responde o faltan las variables
-// de entorno, solo falla el Visor PH y el resto del programa (PLC,
-// compresores, horómetros) sigue funcionando igual.
+// Si el SQL Server no responde o faltan las variables de entorno, solo falla
+// el Visor PH (y Consumos de Energía, que usa esta misma conexión) y el resto
+// del programa (PLC, compresores, horómetros) sigue funcionando igual. Los
+// intentos de conexión corren en segundo plano y nunca frenan el arranque.
 
 const sql = require('mssql');
-
-let poolPromise = null;
+const { crearGestorPool } = require('../sql-pool');
 
 function estaConfigurado() {
     return !!(process.env.PH_SQL_SERVER && process.env.PH_SQL_USER && process.env.PH_SQL_PASSWORD);
@@ -25,7 +24,9 @@ function configuracion() {
         // El SQL Server a veces tarda varios segundos en aceptar conexiones.
         connectionTimeout: 15000,
         requestTimeout: 30000,
-        pool: { max: 5, min: 0, idleTimeoutMillis: 60000 },
+        // Las conexiones sin uso se cierran a los 20 s: así no queda una vieja
+        // que un firewall ya cortó. Reconectar es rápido (ver ../sql-pool.js).
+        pool: { max: 5, min: 0, idleTimeoutMillis: 20000 },
         options: {
             encrypt: false,
             trustServerCertificate: true,
@@ -45,31 +46,19 @@ function configuracion() {
     return config;
 }
 
-function obtenerPool() {
+// El pool lo maneja ../sql-pool.js: mantiene una conexión viva con un latido
+// cada 15 s, falla al instante si el SQL Server no responde y recuerda el
+// puerto de la instancia. Para quien consulta, obtenerPool() sigue siendo lo mismo.
+const gestor = crearGestorPool({
+    nombre: 'PH',
+    estaConfigurado,
+    configuracion,
+    faltante: 'Faltan las variables PH_SQL_* para conectar al SQL Server'
+});
 
-    if (!estaConfigurado()) {
-        return Promise.reject(new Error('Faltan las variables PH_SQL_* para conectar al SQL Server'));
-    }
+gestor.iniciar();
 
-    if (!poolPromise) {
-
-        const pool = new sql.ConnectionPool(configuracion());
-
-        // Si la conexión se cae, descartamos el pool para que el próximo
-        // pedido intente reconectar en vez de quedar roto para siempre.
-        pool.on('error', err => {
-            console.error('SQL PH: error en la conexión:', err.message);
-            poolPromise = null;
-        });
-
-        poolPromise = pool.connect().catch(err => {
-            poolPromise = null;
-            throw err;
-        });
-    }
-
-    return poolPromise;
-}
+const obtenerPool = gestor.obtenerPool;
 
 // Errores de red / conexión (no de la consulta en sí): vale la pena
 // reintentar, o avisar "sin conexión" en vez de "error".
@@ -79,4 +68,13 @@ function esErrorDeConexion(err) {
     return !!err && (CODIGOS_CONEXION.includes(err.code) || err.name === 'ConnectionError');
 }
 
-module.exports = { sql, obtenerPool, estaConfigurado, esErrorDeConexion };
+module.exports = {
+    sql,
+    obtenerPool,
+    estaConfigurado,
+    esErrorDeConexion,
+    // para el panel de Estado del Sistema
+    probar: gestor.probar,
+    estadoConexion: gestor.estado,
+    descripcionCortes: gestor.descripcionCortes
+};

@@ -2991,26 +2991,20 @@ async function objetivosEstado() {
         critico: true,
         configurado: ensayosSql.estaConfigurado,
         faltante: 'Faltan las variables ENSAYOS_SQL_USER y ENSAYOS_SQL_PASSWORD (se cargan en Portainer): los ensayos quedan solo en la base local.',
-        probar: ensayosSql.probar
+        probar: ensayosSql.probar,
+        nota: ensayosSql.descripcionCortes
     });
 
+    // Esta misma conexión la usan el Visor PH y Consumos de Energía
     objetivos.push({
         grupo: 'Base de datos',
-        nombre: 'SQL Server: Visor de Ensayos PH (lectura)',
+        nombre: 'SQL Server: Visor PH y Consumos de Energía (lectura)',
         destino: destinoSqlServer(),
         tipo: 'sql',
         configurado: phSql.estaConfigurado,
-        faltante: 'Falta la variable PH_SQL_PASSWORD (se carga en Portainer): el Visor de Ensayos PH no puede consultar.',
-        probar: async () => {
-
-            const pool = await phSql.obtenerPool();
-
-            const inicio = Date.now();
-
-            await pool.request().query('SELECT 1 AS ok');
-
-            return Date.now() - inicio;
-        }
+        faltante: 'Falta la variable PH_SQL_PASSWORD (se carga en Portainer): el Visor PH y Consumos de Energía no pueden consultar.',
+        probar: phSql.probar,
+        nota: phSql.descripcionCortes
     });
 
     return objetivos;

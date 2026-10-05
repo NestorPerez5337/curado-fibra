@@ -16,9 +16,10 @@
 // monitoreo permanente (para eso está el Monitor de Variables).
 
 const net = require('net');
+const { LATENCIA_LENTA_MS } = require('../sql-pool');
 
 const TIMEOUT_TCP_MS = 2500;
-const TIMEOUT_SQL_MS = 7000;
+const TIMEOUT_SQL_MS = 12000;
 
 // Con varios paneles abiertos (o el refresco automático) no se repite la
 // verificación antes de este tiempo; el botón "Probar ahora" la fuerza, pero
@@ -126,14 +127,24 @@ async function evaluar(objetivo) {
                 `No responde (se esperó ${TIMEOUT_SQL_MS / 1000} s)`
             );
 
-            return { ...base, estado: 'ok', latencia_ms: ms };
+            // "nota": dato extra del propio servicio, ej. los cortes que tuvo
+            const nota = objetivo.nota ? objetivo.nota() : null;
+
+            return {
+                ...base,
+                estado: ms > LATENCIA_LENTA_MS ? 'lento' : 'ok',
+                latencia_ms: ms,
+                ...(nota ? { detalle: nota } : {})
+            };
         }
 
         return { ...base, estado: 'error', detalle: `Tipo de verificación desconocido: ${objetivo.tipo}` };
 
     } catch (err) {
 
-        return { ...base, estado: 'error', detalle: traducirError(err) };
+        const nota = objetivo.nota ? objetivo.nota() : null;
+
+        return { ...base, estado: 'error', detalle: [traducirError(err), nota].filter(Boolean).join(' ') };
     }
 }
 

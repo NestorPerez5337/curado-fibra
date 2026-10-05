@@ -168,6 +168,8 @@ function evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor, ahora =
 
         if (c.estado === 'error') {
             agregar(c.critico ? 'problema' : 'aviso', `Sin conexión: ${c.nombre}`, [c.destino, c.detalle].filter(Boolean).join(' — '));
+        } else if (c.estado === 'lento') {
+            agregar('aviso', `Respuesta lenta: ${c.nombre}`, [`Tarda ${c.latencia_ms} ms en responder.`, c.detalle].filter(Boolean).join(' '));
         } else if (c.estado === 'sin_configurar') {
             agregar('aviso', `Sin configurar: ${c.nombre}`, c.detalle);
         }

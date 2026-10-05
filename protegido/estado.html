@@ -25,7 +25,7 @@
     .chip.ok { background:#1e5a2e; color:#9be3b0; }
     .chip.aviso { background:#6b4a10; color:#ffd58a; }
     .chip.problema, .chip.error { background:#6b1f27; color:#ffb3ba; }
-    .chip.sin_configurar { background:#6b4a10; color:#ffd58a; }
+    .chip.sin_configurar, .chip.lento { background:#6b4a10; color:#ffd58a; }
     .chip.esperando, .chip.info, .chip.neutro { background:#3a3a3a; color:#bbb; }
     .chip.warn { background:#6b4a10; color:#ffd58a; }
     .general { display:flex; align-items:center; gap:12px; padding:14px 18px; border-radius:8px; margin-bottom:12px; font-size:18px; font-weight:bold; }
@@ -380,6 +380,7 @@ function renderTiempos(e) {
 
 const ETIQUETAS_ESTADO = {
     ok: 'Conectado',
+    lento: 'Lenta',
     error: 'Sin conexión',
     sin_configurar: 'Sin configurar',
     esperando: 'Esperando'

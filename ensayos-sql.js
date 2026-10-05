@@ -10,12 +10,12 @@
 // de escritura, distinta de la cuenta de solo lectura del Visor PH. El servidor,
 // la instancia y la base son los mismos (PH_SQL_SERVER / INSTANCE / DATABASE).
 //
-// La conexión se abre recién cuando hace falta: si el SQL Server no responde
-// solo falla este guardado (se reintenta solo) y el resto del programa sigue.
+// Si el SQL Server no responde solo falla este guardado (se reintenta solo) y
+// el resto del programa sigue. La conexión la mantiene viva y vigilada
+// ./sql-pool.js (latido cada 15 s, falla al instante si no hay respuesta).
 
 const sql = require('mssql');
-
-let poolPromise = null;
+const { crearGestorPool } = require('./sql-pool');
 
 function estaConfigurado() {
     return !!(process.env.PH_SQL_SERVER && process.env.ENSAYOS_SQL_USER && process.env.ENSAYOS_SQL_PASSWORD);
@@ -30,7 +30,7 @@ function configuracion() {
         password: process.env.ENSAYOS_SQL_PASSWORD,
         connectionTimeout: 15000,
         requestTimeout: 30000,
-        pool: { max: 2, min: 0, idleTimeoutMillis: 60000 },
+        pool: { max: 2, min: 0, idleTimeoutMillis: 20000 },
         options: {
             encrypt: false,
             trustServerCertificate: true,
@@ -48,31 +48,16 @@ function configuracion() {
     return config;
 }
 
-function obtenerPool() {
+const gestor = crearGestorPool({
+    nombre: 'ensayos',
+    estaConfigurado,
+    configuracion,
+    faltante: 'Faltan las variables ENSAYOS_SQL_* para conectar al SQL Server'
+});
 
-    if (!estaConfigurado()) {
-        return Promise.reject(new Error('Faltan las variables ENSAYOS_SQL_* para conectar al SQL Server'));
-    }
+gestor.iniciar();
 
-    if (!poolPromise) {
-
-        const pool = new sql.ConnectionPool(configuracion());
-
-        // Si la conexión se cae, descartamos el pool para que el próximo
-        // intento reconecte en vez de quedar roto para siempre.
-        pool.on('error', err => {
-            console.error('SQL ensayos: error en la conexión:', err.message);
-            poolPromise = null;
-        });
-
-        poolPromise = pool.connect().catch(err => {
-            poolPromise = null;
-            throw err;
-        });
-    }
-
-    return poolPromise;
-}
+const obtenerPool = gestor.obtenerPool;
 
 // Guarda el ensayo completo (maestro + todas las lecturas) en una sola
 // transacción: o queda entero o no queda nada. Si el mismo ensayo (OP,
@@ -144,17 +129,11 @@ async function guardarEnsayo({ op, cano, fecha, muestras }) {
     }
 }
 
-// Prueba la conexión con una consulta mínima (la usa el panel de Estado del
-// Sistema). Devuelve cuántos ms tardó; si no responde, lanza el error.
-async function probar() {
-
-    const pool = await obtenerPool();
-
-    const inicio = Date.now();
-
-    await pool.request().query('SELECT 1 AS ok');
-
-    return Date.now() - inicio;
-}
-
-module.exports = { estaConfigurado, guardarEnsayo, probar };
+module.exports = {
+    estaConfigurado,
+    guardarEnsayo,
+    // para el panel de Estado del Sistema: cuántos ms tardó el latido, o el error
+    probar: gestor.probar,
+    estadoConexion: gestor.estado,
+    descripcionCortes: gestor.descripcionCortes
+};
