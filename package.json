@@ -11,13 +11,19 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "archiver": "^7.0.1",
+    "chart.js": "^3.9.1",
     "chartjs-node-canvas": "^4.1.6",
+    "chartjs-plugin-annotation": "^2.2.1",
     "chartjs-plugin-datalabels": "^2.2.0",
+    "chartjs-plugin-zoom": "^2.0.1",
     "dotenv": "^16.5.0",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "hammerjs": "^2.0.8",
     "jsmodbus": "^4.0.10",
     "mqtt": "^5.5.0",
+    "mssql": "^11.0.2",
     "pdfkit": "^0.15.0",
     "sqlite3": "^5.1.7"
   }
