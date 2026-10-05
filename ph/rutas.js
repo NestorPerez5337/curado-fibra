@@ -34,7 +34,12 @@ const ARCHIVOS_ESTATICOS = {
     'hammer.min.js': path.join(carpetaPaquete('hammerjs'), 'hammer.min.js'),
     'chartjs-plugin-zoom.min.js': path.join(carpetaPaquete('chartjs-plugin-zoom'), 'dist', 'chartjs-plugin-zoom.min.js'),
     'chartjs-plugin-annotation.min.js': path.join(carpetaPaquete('chartjs-plugin-annotation'), 'dist', 'chartjs-plugin-annotation.min.js'),
-    'grafico.js': path.join(__dirname, 'grafico.js')
+    'grafico.js': path.join(__dirname, 'grafico.js'),
+    // Selector de fecha de la descarga masiva (ver energia/rutas.js: el
+    // <input type="date"> nativo muestra el formato del navegador).
+    'flatpickr.min.js': path.join(carpetaPaquete('flatpickr'), 'dist', 'flatpickr.min.js'),
+    'flatpickr-dark.css': path.join(carpetaPaquete('flatpickr'), 'dist', 'themes', 'dark.css'),
+    'flatpickr-es.js': path.join(carpetaPaquete('flatpickr'), 'dist', 'l10n', 'es.js')
 };
 
 // OP y caño son nvarchar(25) en la base.

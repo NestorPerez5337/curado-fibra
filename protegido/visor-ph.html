@@ -9,6 +9,9 @@
 <script src="/ph-assets/chartjs-plugin-zoom.min.js"></script>
 <script src="/ph-assets/chartjs-plugin-annotation.min.js"></script>
 <script src="/ph-assets/grafico.js"></script>
+<link rel="stylesheet" href="/ph-assets/flatpickr-dark.css">
+<script src="/ph-assets/flatpickr.min.js"></script>
+<script src="/ph-assets/flatpickr-es.js"></script>
 <style>
 :root{ --bg:#111; --panel:#1a1a1a; --panel2:#222; --borde:#333; --texto:#eee; --tenue:#999; --acento:#00bfff; --error:#ff6b6b; }
 *{box-sizing:border-box}
@@ -107,8 +110,8 @@ select:disabled,input:disabled{opacity:.5}
     <div class="ultimo" id="mUltimo"></div>
     <div class="grilla">
       <label style="grid-column:span 2">OP <input id="mOp" list="listaOps" autocomplete="off"></label>
-      <label>Fecha desde <input type="date" id="mDesde"></label>
-      <label>Fecha hasta <input type="date" id="mHasta"></label>
+      <label>Fecha desde <input id="mDesde"></label>
+      <label>Fecha hasta <input id="mHasta"></label>
       <label>Caño desde <input type="number" id="mCanoDesde" min="0"></label>
       <label>Caño hasta <input type="number" id="mCanoHasta" min="0"></label>
     </div>
@@ -337,6 +340,21 @@ const masiva = { lote: { estado: 'libre' }, total: 0, maximo: 3000, timerConteo:
 
 const camposLote = ['mOp', 'mDesde', 'mHasta', 'mCanoDesde', 'mCanoHasta'];
 
+// Selector de fecha propio (dd/mm/aaaa, en español): el <input type="date">
+// nativo muestra el formato del navegador (en Edge en inglés, mes/día). El
+// valor interno sigue siendo 'YYYY-MM-DD', que es lo que se manda.
+const fechasLote = {};
+['mDesde', 'mHasta'].forEach(id => {
+  fechasLote[id] = flatpickr('#' + id, {
+    locale: flatpickr.l10ns.es,
+    dateFormat: 'Y-m-d',
+    altInput: true,
+    altFormat: 'd/m/Y',
+    allowInput: true,
+    onChange: () => contarDespues()
+  });
+});
+
 function filtrosLote() {
   return {
     op: $('mOp').value.trim(), desde: $('mDesde').value, hasta: $('mHasta').value,
@@ -399,6 +417,7 @@ function pintarLote() {
 
   // Formulario
   camposLote.forEach(id => $(id).disabled = verResultado);
+  Object.values(fechasLote).forEach(fp => { fp.altInput.disabled = verResultado; });
   $('mConteo').style.display = verResultado ? 'none' : 'block';
 
   // Progreso / resultado
@@ -498,6 +517,7 @@ function abrirMasiva() {
   masiva.formulario = true;
   masiva.total = 0;
   camposLote.forEach(id => $(id).value = '');
+  Object.values(fechasLote).forEach(fp => fp.clear(false));
   $('mOp').value = $('op').value.trim();
   $('mMaquina').textContent = `Máquina ${$('maquina').selectedOptions[0] ? $('maquina').selectedOptions[0].textContent : ''} · completá al menos un filtro. Se genera un ZIP con un PDF por ensayo.`;
   $('fondo').classList.add('abierto');

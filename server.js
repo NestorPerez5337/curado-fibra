@@ -189,12 +189,13 @@ db.serialize(() => {
             perm_horometros INTEGER NOT NULL DEFAULT 0,
             perm_visor INTEGER NOT NULL DEFAULT 0,
             perm_compresores INTEGER NOT NULL DEFAULT 0,
+            perm_energia INTEGER NOT NULL DEFAULT 0,
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `);
 
     // Migración: si la tabla usuarios ya existía de una versión anterior
-    // (sin la columna perm_compresores), la agregamos ahora.
+    // (sin alguna de las columnas de permisos más nuevas), la agregamos ahora.
     db.all(`PRAGMA table_info(usuarios)`, [], (err, columnas) => {
 
         if (err) {
@@ -202,29 +203,33 @@ db.serialize(() => {
             return;
         }
 
-        const tieneColumna =
-            columnas.some(c => c.name === 'perm_compresores');
+        ['perm_compresores', 'perm_energia'].forEach(columna => {
 
-        if (!tieneColumna) {
+            const tieneColumna =
+                columnas.some(c => c.name === columna);
+
+            if (tieneColumna) {
+                return;
+            }
 
             db.run(
-                `ALTER TABLE usuarios ADD COLUMN perm_compresores INTEGER NOT NULL DEFAULT 0`,
+                `ALTER TABLE usuarios ADD COLUMN ${columna} INTEGER NOT NULL DEFAULT 0`,
                 err2 => {
 
                     if (err2) {
-                        console.error('Error migrando columna perm_compresores:', err2);
+                        console.error(`Error migrando columna ${columna}:`, err2);
                         return;
                     }
 
-                    console.log('Columna perm_compresores agregada a usuarios.');
+                    console.log(`Columna ${columna} agregada a usuarios.`);
 
                     // Los administradores ya existentes quedan con el permiso
                     // marcado (igual tienen acceso total por ser admin, esto
                     // es solo para que se vea consistente en la pantalla).
-                    db.run(`UPDATE usuarios SET perm_compresores = 1 WHERE es_admin = 1`);
+                    db.run(`UPDATE usuarios SET ${columna} = 1 WHERE es_admin = 1`);
                 }
             );
-        }
+        });
     });
 
     // Si todavía no existe ningún administrador, creamos uno inicial
@@ -249,8 +254,8 @@ db.serialize(() => {
 
             db.run(
                 `INSERT INTO usuarios
-                    (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores)
-                 VALUES (?, ?, ?, 1, 1, 1, 1, 1)`,
+                    (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores, perm_energia)
+                 VALUES (?, ?, ?, 1, 1, 1, 1, 1, 1)`,
                 [usuarioAdmin, salt, hash],
                 err2 => {
 
@@ -612,7 +617,8 @@ function usuarioDesdeFila(fila) {
             devanadoras: !!fila.perm_devanadoras,
             horometros: !!fila.perm_horometros,
             visor: !!fila.perm_visor,
-            compresores: !!fila.perm_compresores
+            compresores: !!fila.perm_compresores,
+            energia: !!fila.perm_energia
         }
     };
 }
@@ -741,7 +747,7 @@ app.get('/api/me', requiereLogin, (req, res) => {
 app.get('/api/usuarios', requiereAdmin, (req, res) => {
 
     db.all(
-        `SELECT id, usuario, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores, fecha
+        `SELECT id, usuario, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores, perm_energia, fecha
          FROM usuarios ORDER BY usuario ASC`,
         [],
         (err, filas) => {
@@ -759,7 +765,8 @@ app.get('/api/usuarios', requiereAdmin, (req, res) => {
                     devanadoras: !!f.perm_devanadoras,
                     horometros: !!f.perm_horometros,
                     visor: !!f.perm_visor,
-                    compresores: !!f.perm_compresores
+                    compresores: !!f.perm_compresores,
+                    energia: !!f.perm_energia
                 },
                 fecha: f.fecha
             })));
@@ -779,8 +786,8 @@ app.post('/api/usuarios', requiereAdmin, (req, res) => {
 
     db.run(
         `INSERT INTO usuarios
-            (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (usuario, salt, hash, es_admin, perm_devanadoras, perm_horometros, perm_visor, perm_compresores, perm_energia)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             usuario,
             salt,
@@ -789,7 +796,8 @@ app.post('/api/usuarios', requiereAdmin, (req, res) => {
             permisos && permisos.devanadoras ? 1 : 0,
             permisos && permisos.horometros ? 1 : 0,
             permisos && permisos.visor ? 1 : 0,
-            permisos && permisos.compresores ? 1 : 0
+            permisos && permisos.compresores ? 1 : 0,
+            permisos && permisos.energia ? 1 : 0
         ],
         function (err) {
 
@@ -825,7 +833,8 @@ app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
             'perm_devanadoras = ?',
             'perm_horometros = ?',
             'perm_visor = ?',
-            'perm_compresores = ?'
+            'perm_compresores = ?',
+            'perm_energia = ?'
         ];
 
         const valores = [
@@ -833,7 +842,8 @@ app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
             permisos && permisos.devanadoras ? 1 : 0,
             permisos && permisos.horometros ? 1 : 0,
             permisos && permisos.visor ? 1 : 0,
-            permisos && permisos.compresores ? 1 : 0
+            permisos && permisos.compresores ? 1 : 0,
+            permisos && permisos.energia ? 1 : 0
         ];
 
         if (salt && hash) {
@@ -2836,6 +2846,12 @@ app.get('/compresores/historial', requierePermisoPagina('compresores'), (req, re
 // ======================================================
 
 require('./ph/rutas')(app, { requierePermiso, requierePermisoPagina });
+
+// ======================================================
+// CONSUMOS DE ENERGÍA (código en ./energia)
+// ======================================================
+
+require('./energia/rutas')(app, { requierePermiso, requierePermisoPagina });
 
 // ======================================================
 // MONITOR DE VARIABLES (código en ./monitor, solo administradores)

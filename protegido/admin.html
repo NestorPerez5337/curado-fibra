@@ -47,6 +47,7 @@
         <label class="chk"><input type="checkbox" id="nu-horometros"> Horómetros</label>
         <label class="chk"><input type="checkbox" id="nu-visor"> Visor de Ensayos</label>
         <label class="chk"><input type="checkbox" id="nu-compresores"> Compresores</label>
+        <label class="chk"><input type="checkbox" id="nu-energia"> Energía</label>
         <button class="btn-crear" onclick="crearUsuario()">Crear usuario</button>
     </div>
     <div id="msg-crear" class="msg"></div>
@@ -63,6 +64,7 @@
                 <th>Horómetros</th>
                 <th>Visor</th>
                 <th>Compresores</th>
+                <th>Energía</th>
                 <th>Nueva contraseña</th>
                 <th>Acciones</th>
             </tr>
@@ -225,6 +227,7 @@ async function cargarUsuarios() {
             <td><input type="checkbox" data-campo="horometros" ${u.permisos.horometros ? 'checked' : ''}></td>
             <td><input type="checkbox" data-campo="visor" ${u.permisos.visor ? 'checked' : ''}></td>
             <td><input type="checkbox" data-campo="compresores" ${u.permisos.compresores ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-campo="energia" ${u.permisos.energia ? 'checked' : ''}></td>
             <td><input type="text" class="mini" placeholder="(sin cambios)" data-campo="pass"></td>
             <td>
                 <button class="btn-guardar" onclick="guardarUsuario(${u.id}, this)">Guardar</button>
@@ -256,7 +259,8 @@ async function crearUsuario() {
             devanadoras: document.getElementById('nu-devanadoras').checked,
             horometros: document.getElementById('nu-horometros').checked,
             visor: document.getElementById('nu-visor').checked,
-            compresores: document.getElementById('nu-compresores').checked
+            compresores: document.getElementById('nu-compresores').checked,
+            energia: document.getElementById('nu-energia').checked
         }
     };
 
@@ -283,6 +287,7 @@ async function crearUsuario() {
     document.getElementById('nu-horometros').checked = false;
     document.getElementById('nu-visor').checked = false;
     document.getElementById('nu-compresores').checked = false;
+    document.getElementById('nu-energia').checked = false;
 
     cargarUsuarios();
 }
@@ -299,7 +304,8 @@ async function guardarUsuario(id, boton) {
             devanadoras: leer('devanadoras'),
             horometros: leer('horometros'),
             visor: leer('visor'),
-            compresores: leer('compresores')
+            compresores: leer('compresores'),
+            energia: leer('energia')
         }
     };
 
