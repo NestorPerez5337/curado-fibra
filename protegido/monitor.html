@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Monitor de Variables</title>
+<style>
+    body { font-family: Arial, sans-serif; background:#121212; color:#eee; margin:0; padding:20px; }
+    a.volver { display:inline-block; margin-bottom:10px; color:#007bff; text-decoration:none; font-weight:bold; }
+    h1 { color:#007bff; margin-top:0; }
+    h2 { color:#007bff; font-size:16px; margin-top:0; }
+    .panel { background:#1f1f1f; border:1px solid #333; border-radius:8px; padding:20px; max-width:1300px; margin:0 auto 20px; }
+    label { display:block; margin-bottom:4px; color:#aaa; font-size:13px; }
+    input[type=text], input[type=number], input[type=date], select {
+        padding:8px; background:#2a2a2a; color:white; border:1px solid #444; border-radius:4px; box-sizing:border-box;
+    }
+    .fila-form { display:flex; gap:15px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+    .fila-form > div { display:flex; flex-direction:column; }
+    button { padding:8px 15px; cursor:pointer; border:none; border-radius:4px; font-weight:bold; }
+    .btn-guardar { background:#28a745; color:white; }
+    .btn-azul { background:#007bff; color:white; }
+    .btn-gris { background:#555; color:white; }
+    .btn-peligro { background:#dc3545; color:white; }
+    .btn-mini { padding:5px 10px; font-size:12px; margin-right:4px; }
+    .contenedor-tabla { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th, td { border:1px solid #333; padding:8px; text-align:left; font-size:13px; vertical-align:top; }
+    th { background:#222; white-space:nowrap; }
+    .msg { margin-top:8px; font-size:13px; min-height:16px; }
+    .msg.error { color:#dc3545; }
+    .msg.ok { color:#28a745; }
+    .ayuda { color:#888; font-size:12px; margin:0 0 12px; }
+    .chip { display:inline-block; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:bold; white-space:nowrap; }
+    .chip.ok { background:#1e5a2e; color:#9be3b0; }
+    .chip.sin_conexion { background:#6b1f27; color:#ffb3ba; }
+    .chip.sin_datos { background:#6b4a10; color:#ffd58a; }
+    .chip.error { background:#6b3a10; color:#ffc58a; }
+    .chip.desconocido, .chip.pausada { background:#3a3a3a; color:#bbb; }
+    .chip.cambio { background:#12406b; color:#9fd0ff; }
+    .chip.conexion_perdida { background:#6b1f27; color:#ffb3ba; }
+    .chip.error_lectura { background:#6b3a10; color:#ffc58a; }
+    .chip.restablecida { background:#1e5a2e; color:#9be3b0; }
+    .detalle { color:#999; font-size:11px; margin-top:4px; }
+    .valor { font-family:Consolas, monospace; font-size:14px; }
+    .oculto { display:none; }
+    .barra-filtros { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+    .barra-filtros > div { display:flex; flex-direction:column; }
+    .cantidad { color:#888; font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<a class="volver" href="/">&larr; Volver al menú</a>
+<h1>Monitor de Variables</h1>
+
+<div class="panel">
+    <h2 id="titulo-form">Agregar variable</h2>
+    <p class="ayuda">Agregá las variables Modbus o MQTT que quieras vigilar. Cada vez que cambien de valor, o un equipo deje de responder, queda registrado con fecha y hora.</p>
+
+    <div class="fila-form">
+        <div>
+            <label>Nombre</label>
+            <input type="text" id="f-nombre" maxlength="60" style="width:240px;" placeholder="Ej.: Bomba 1 marcha">
+        </div>
+        <div>
+            <label>Tipo</label>
+            <select id="f-tipo" onchange="cambiarTipo()">
+                <option value="modbus">Modbus TCP</option>
+                <option value="mqtt">MQTT</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="campos-modbus">
+        <div class="fila-form">
+            <div>
+                <label>IP del equipo</label>
+                <input type="text" id="f-ip" style="width:150px;" placeholder="10.10.104.37">
+            </div>
+            <div>
+                <label>Puerto</label>
+                <input type="number" id="f-puerto" value="502" style="width:80px;">
+            </div>
+            <div>
+                <label>Unit ID</label>
+                <input type="number" id="f-unit" value="1" style="width:70px;">
+            </div>
+            <div>
+                <label>Tipo de dato</label>
+                <select id="f-funcion" onchange="cambiarFuncion()">
+                    <option value="coil">Coil (bit)</option>
+                    <option value="discreta">Entrada discreta (bit)</option>
+                    <option value="holding">Holding register</option>
+                    <option value="input">Input register</option>
+                </select>
+            </div>
+            <div>
+                <label>Dirección</label>
+                <input type="number" id="f-direccion" style="width:90px;" placeholder="0">
+            </div>
+            <div id="grupo-formato" class="oculto">
+                <label>Formato</label>
+                <select id="f-formato">
+                    <option value="uint16">Sin signo (0 a 65535)</option>
+                    <option value="int16">Con signo (-32768 a 32767)</option>
+                </select>
+            </div>
+            <div>
+                <label>Leer cada (ms)</label>
+                <input type="number" id="f-intervalo" value="1000" style="width:90px;">
+            </div>
+            <div id="grupo-banda-modbus" class="oculto">
+                <label>Banda (cambio mínimo)</label>
+                <input type="number" id="f-banda-modbus" value="0" step="any" style="width:110px;">
+            </div>
+        </div>
+    </div>
+
+    <div id="campos-mqtt" class="oculto">
+        <div class="fila-form">
+            <div>
+                <label>Broker</label>
+                <input type="text" id="f-broker" value="mqtt://10.106.100.50:1883" style="width:230px;">
+            </div>
+            <div>
+                <label>Tópico</label>
+                <input type="text" id="f-topico" style="width:220px;" placeholder="horometros2">
+            </div>
+            <div>
+                <label>Campo del JSON (opcional)</label>
+                <input type="text" id="f-campo" style="width:190px;" placeholder="Ej.: maquina1 o datos.temp">
+            </div>
+            <div>
+                <label>Avisar si no llega nada en (s)</label>
+                <input type="number" id="f-timeout" value="0" style="width:90px;">
+            </div>
+            <div>
+                <label>Banda (cambio mínimo)</label>
+                <input type="number" id="f-banda-mqtt" value="0" step="any" style="width:110px;">
+            </div>
+        </div>
+    </div>
+
+    <p class="ayuda" id="ayuda-banda">Banda: con 0 se registra cualquier cambio. En valores analógicos que oscilan conviene una banda (ej.: 2) para que solo quede registrado el cambio de al menos esa cantidad. Con "Avisar si no llega nada" en 0, no se vigila el silencio del tópico.</p>
+
+    <button class="btn-guardar" id="btn-guardar" onclick="guardarVariable()">Agregar variable</button>
+    <button class="btn-gris oculto" id="btn-cancelar" onclick="cancelarEdicion()">Cancelar edición</button>
+    <div id="msg-form" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Variables monitoreadas</h2>
+    <div class="contenedor-tabla">
+        <table>
+            <thead>
+                <tr>
+                    <th>Estado</th>
+                    <th>Nombre</th>
+                    <th>Origen</th>
+                    <th>Valor actual</th>
+                    <th>Última lectura</th>
+                    <th>Última novedad</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-variables"></tbody>
+        </table>
+    </div>
+    <div id="msg-tabla" class="msg"></div>
+</div>
+
+<div class="panel">
+    <h2>Registro de eventos</h2>
+    <div class="barra-filtros">
+        <div>
+            <label>Variable</label>
+            <select id="e-variable" onchange="cargarEventos()"><option value="">Todas</option></select>
+        </div>
+        <div>
+            <label>Evento</label>
+            <select id="e-tipo" onchange="cargarEventos()">
+                <option value="">Todos</option>
+                <option value="cambio">Cambio de valor</option>
+                <option value="conexion_perdida">Conexión perdida</option>
+                <option value="sin_datos">Sin datos</option>
+                <option value="error_lectura">Error de lectura</option>
+                <option value="restablecida">Restablecida</option>
+            </select>
+        </div>
+        <div>
+            <label>Desde</label>
+            <input type="date" id="e-desde" onchange="cargarEventos()">
+        </div>
+        <div>
+            <label>Hasta</label>
+            <input type="date" id="e-hasta" onchange="cargarEventos()">
+        </div>
+        <div>
+            <button class="btn-azul" onclick="cargarEventos()">Actualizar</button>
+        </div>
+        <div>
+            <label style="display:flex; align-items:center; gap:6px; margin:0 0 8px;">
+                <input type="checkbox" id="e-auto" checked> Actualizar solo cada 5 s
+            </label>
+        </div>
+    </div>
+    <div class="contenedor-tabla">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fecha y hora</th>
+                    <th>Variable</th>
+                    <th>Evento</th>
+                    <th>Antes</th>
+                    <th>Ahora</th>
+                    <th>Detalle</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-eventos"></tbody>
+        </table>
+    </div>
+    <div class="cantidad" id="cantidad-eventos"></div>
+    <div id="msg-eventos" class="msg"></div>
+</div>
+
+<script>
+
+// Si la sesión venció, volvemos al login en vez de quedar con la pantalla rota
+(function () {
+    const fetchOriginal = window.fetch;
+    window.fetch = async function (...args) {
+        const res = await fetchOriginal(...args);
+        if (res.status === 401) {
+            window.location.href = '/';
+        }
+        return res;
+    };
+})();
+
+const ETIQUETA_ESTADO = {
+    ok: 'OK',
+    sin_conexion: 'SIN CONEXIÓN',
+    sin_datos: 'SIN DATOS',
+    error: 'ERROR',
+    desconocido: 'SIN LECTURA',
+    pausada: 'PAUSADA'
+};
+
+const ETIQUETA_EVENTO = {
+    cambio: 'Cambio',
+    conexion_perdida: 'Conexión perdida',
+    sin_datos: 'Sin datos',
+    error_lectura: 'Error de lectura',
+    restablecida: 'Restablecida'
+};
+
+const NOMBRE_FUNCION = {
+    coil: 'Coil',
+    discreta: 'Entrada discreta',
+    holding: 'Holding',
+    input: 'Input reg.'
+};
+
+let variables = [];
+let editandoId = null;
+
+function esc(valor) {
+    return String(valor === null || valor === undefined ? '' : valor)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function mostrar(idMsg, texto, esError) {
+    const el = document.getElementById(idMsg);
+    el.className = 'msg ' + (esError ? 'error' : 'ok');
+    el.innerText = texto || '';
+}
+
+function valorDe(id) {
+    return document.getElementById(id).value;
+}
+
+function cambiarTipo() {
+    const esModbus = valorDe('f-tipo') === 'modbus';
+    document.getElementById('campos-modbus').classList.toggle('oculto', !esModbus);
+    document.getElementById('campos-mqtt').classList.toggle('oculto', esModbus);
+    cambiarFuncion();
+}
+
+function cambiarFuncion() {
+    const esRegistro = ['holding', 'input'].includes(valorDe('f-funcion'));
+    document.getElementById('grupo-formato').classList.toggle('oculto', !esRegistro);
+    document.getElementById('grupo-banda-modbus').classList.toggle('oculto', !esRegistro);
+}
+
+function datosDelFormulario() {
+
+    const base = {
+        nombre: valorDe('f-nombre'),
+        tipo: valorDe('f-tipo')
+    };
+
+    if (base.tipo === 'modbus') {
+        return {
+            ...base,
+            ip: valorDe('f-ip'),
+            puerto: valorDe('f-puerto'),
+            unit_id: valorDe('f-unit'),
+            funcion: valorDe('f-funcion'),
+            direccion: valorDe('f-direccion'),
+            formato: valorDe('f-formato'),
+            intervalo_ms: valorDe('f-intervalo'),
+            banda: valorDe('f-banda-modbus')
+        };
+    }
+
+    return {
+        ...base,
+        broker: valorDe('f-broker'),
+        topico: valorDe('f-topico'),
+        campo: valorDe('f-campo'),
+        timeout_s: valorDe('f-timeout'),
+        banda: valorDe('f-banda-mqtt')
+    };
+}
+
+async function guardarVariable() {
+
+    mostrar('msg-form', '');
+
+    const datos = datosDelFormulario();
+
+    const url = editandoId === null ? '/api/monitor/variables' : '/api/monitor/variables/' + editandoId;
+
+    const res = await fetch(url, {
+        method: editandoId === null ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(datos)
+    });
+
+    if (!res.ok) {
+        mostrar('msg-form', await res.text(), true);
+        return;
+    }
+
+    mostrar('msg-form', editandoId === null ? 'Variable agregada.' : 'Cambios guardados.', false);
+
+    limpiarFormulario();
+    await cargarVariables();
+    await cargarEventos();
+}
+
+function limpiarFormulario() {
+
+    editandoId = null;
+
+    ['f-nombre', 'f-ip', 'f-direccion', 'f-topico', 'f-campo'].forEach(id => { document.getElementById(id).value = ''; });
+
+    document.getElementById('f-puerto').value = 502;
+    document.getElementById('f-unit').value = 1;
+    document.getElementById('f-intervalo').value = 1000;
+    document.getElementById('f-banda-modbus').value = 0;
+    document.getElementById('f-banda-mqtt').value = 0;
+    document.getElementById('f-timeout').value = 0;
+    document.getElementById('f-broker').value = 'mqtt://10.106.100.50:1883';
+    document.getElementById('f-funcion').value = 'coil';
+    document.getElementById('f-formato').value = 'uint16';
+
+    document.getElementById('titulo-form').innerText = 'Agregar variable';
+    document.getElementById('btn-guardar').innerText = 'Agregar variable';
+    document.getElementById('btn-cancelar').classList.add('oculto');
+
+    cambiarTipo();
+}
+
+function cancelarEdicion() {
+    limpiarFormulario();
+    mostrar('msg-form', '');
+}
+
+function editarVariable(id) {
+
+    const v = variables.find(x => x.id === id);
+
+    if (!v) {
+        return;
+    }
+
+    editandoId = id;
+
+    document.getElementById('f-nombre').value = v.nombre;
+    document.getElementById('f-tipo').value = v.tipo;
+
+    if (v.tipo === 'modbus') {
+        document.getElementById('f-ip').value = v.ip;
+        document.getElementById('f-puerto').value = v.puerto;
+        document.getElementById('f-unit').value = v.unit_id;
+        document.getElementById('f-funcion').value = v.funcion;
+        document.getElementById('f-direccion').value = v.direccion;
+        document.getElementById('f-formato').value = v.formato || 'uint16';
+        document.getElementById('f-intervalo').value = v.intervalo_ms;
+        document.getElementById('f-banda-modbus').value = v.banda;
+    } else {
+        document.getElementById('f-broker').value = v.broker;
+        document.getElementById('f-topico').value = v.topico;
+        document.getElementById('f-campo').value = v.campo || '';
+        document.getElementById('f-timeout').value = v.timeout_s;
+        document.getElementById('f-banda-mqtt').value = v.banda;
+    }
+
+    cambiarTipo();
+
+    document.getElementById('titulo-form').innerText = 'Editar variable';
+    document.getElementById('btn-guardar').innerText = 'Guardar cambios';
+    document.getElementById('btn-cancelar').classList.remove('oculto');
+    mostrar('msg-form', 'Al guardar se reinicia el seguimiento de esta variable (queda registrado un nuevo valor inicial).', false);
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function pausarReanudar(id, activo) {
+
+    const res = await fetch('/api/monitor/variables/' + id + '/activo', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo })
+    });
+
+    if (!res.ok) {
+        mostrar('msg-tabla', await res.text(), true);
+        return;
+    }
+
+    await cargarVariables();
+}
+
+async function eliminarVariable(id) {
+
+    const v = variables.find(x => x.id === id);
+
+    if (!v || !confirm('¿Eliminar la variable "' + v.nombre + '" del monitor?')) {
+        return;
+    }
+
+    const conHistorial = confirm(
+        'Además, ¿borrar todo su historial de eventos?\n\nAceptar = borrar el historial también.\nCancelar = conservar el historial.'
+    );
+
+    const res = await fetch('/api/monitor/variables/' + id + (conHistorial ? '?borrarEventos=1' : ''), { method: 'DELETE' });
+
+    if (!res.ok) {
+        mostrar('msg-tabla', await res.text(), true);
+        return;
+    }
+
+    if (editandoId === id) {
+        limpiarFormulario();
+    }
+
+    await cargarVariables();
+    await cargarEventos();
+}
+
+function describirOrigen(v) {
+
+    if (v.tipo === 'modbus') {
+        return 'Modbus ' + v.ip + ':' + v.puerto + ' · ' + NOMBRE_FUNCION[v.funcion] + ' ' + v.direccion;
+    }
+
+    return 'MQTT ' + v.topico + (v.campo ? ' → ' + v.campo : '');
+}
+
+function pintarVariables() {
+
+    const tbody = document.getElementById('tabla-variables');
+
+    if (variables.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="color:#888;">Todavía no hay variables. Agregá la primera con el formulario de arriba.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = variables.map(v => `
+        <tr>
+            <td>
+                <span class="chip ${esc(v.estado)}">${esc(ETIQUETA_ESTADO[v.estado] || v.estado)}</span>
+                ${v.detalle && v.estado !== 'ok' ? `<div class="detalle">${esc(v.detalle)}</div>` : ''}
+                ${v.estado_desde && v.estado !== 'ok' && v.estado !== 'pausada' ? `<div class="detalle">desde ${esc(v.estado_desde)}</div>` : ''}
+            </td>
+            <td>${esc(v.nombre)}</td>
+            <td>${esc(describirOrigen(v))}</td>
+            <td class="valor">${v.valor === null ? '—' : esc(v.valor)}</td>
+            <td>${esc(v.ultimo_dato || '—')}</td>
+            <td>${esc(v.ultimo_cambio || '—')}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn-azul btn-mini" onclick="editarVariable(${v.id})">Editar</button>
+                <button class="btn-gris btn-mini" onclick="pausarReanudar(${v.id}, ${v.activo ? 'false' : 'true'})">${v.activo ? 'Pausar' : 'Reanudar'}</button>
+                <button class="btn-peligro btn-mini" onclick="eliminarVariable(${v.id})">Eliminar</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function actualizarSelectorVariables() {
+
+    const select = document.getElementById('e-variable');
+    const actual = select.value;
+
+    select.innerHTML = '<option value="">Todas</option>' +
+        variables.map(v => `<option value="${v.id}">${esc(v.nombre)}</option>`).join('');
+
+    select.value = variables.some(v => String(v.id) === actual) ? actual : '';
+}
+
+let ultimaListaIds = '';
+
+async function cargarVariables() {
+
+    const res = await fetch('/api/monitor/variables');
+
+    if (!res.ok) {
+        mostrar('msg-tabla', 'No se pudo cargar la lista de variables.', true);
+        return;
+    }
+
+    mostrar('msg-tabla', '');
+
+    variables = await res.json();
+
+    pintarVariables();
+
+    const ids = variables.map(v => v.id + ':' + v.nombre).join('|');
+
+    if (ids !== ultimaListaIds) {
+        ultimaListaIds = ids;
+        actualizarSelectorVariables();
+    }
+}
+
+async function cargarEventos() {
+
+    const params = new URLSearchParams();
+
+    ['variable', 'tipo', 'desde', 'hasta'].forEach(campo => {
+
+        const valor = valorDe('e-' + campo);
+
+        if (valor) {
+            params.set(campo, valor);
+        }
+    });
+
+    const res = await fetch('/api/monitor/eventos?' + params.toString());
+
+    if (!res.ok) {
+        mostrar('msg-eventos', 'No se pudo cargar el registro de eventos.', true);
+        return;
+    }
+
+    mostrar('msg-eventos', '');
+
+    const eventos = await res.json();
+
+    document.getElementById('tabla-eventos').innerHTML = eventos.length === 0
+        ? '<tr><td colspan="6" style="color:#888;">No hay eventos para mostrar.</td></tr>'
+        : eventos.map(e => `
+            <tr>
+                <td style="white-space:nowrap;">${esc(e.fecha_hora)}</td>
+                <td>${esc(e.variable_nombre)}</td>
+                <td><span class="chip ${esc(e.tipo)}">${esc(ETIQUETA_EVENTO[e.tipo] || e.tipo)}</span></td>
+                <td class="valor">${esc(e.valor_anterior || '')}</td>
+                <td class="valor">${esc(e.valor_nuevo || '')}</td>
+                <td>${esc(e.detalle || '')}</td>
+            </tr>
+        `).join('');
+
+    document.getElementById('cantidad-eventos').innerText =
+        eventos.length === 500 ? 'Mostrando los últimos 500 eventos (hay más: filtrá por variable o fecha).' : 'Mostrando ' + eventos.length + ' eventos.';
+}
+
+cambiarTipo();
+cargarVariables();
+cargarEventos();
+
+setInterval(cargarVariables, 2000);
+
+setInterval(() => {
+    if (document.getElementById('e-auto').checked) {
+        cargarEventos();
+    }
+}, 5000);
+
+</script>
+
+</body>
+</html>
