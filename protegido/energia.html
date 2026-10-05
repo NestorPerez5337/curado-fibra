@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consumos de Energía</title>
+<link rel="stylesheet" href="/energia-assets/flatpickr-dark.css">
+<script src="/energia-assets/flatpickr.min.js"></script>
+<script src="/energia-assets/flatpickr-es.js"></script>
+<style>
+:root{ --bg:#111; --panel:#1a1a1a; --panel2:#222; --borde:#333; --texto:#eee; --tenue:#999; --acento:#00bfff; --alerta:#ffc800; --error:#ff6b6b; }
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--texto);}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--borde)}
+header a{color:var(--acento);text-decoration:none;font-weight:bold}
+header h1{font-size:20px;margin:0;flex:1}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid #444;background:var(--panel2);color:var(--texto);padding:8px 14px}
+button:hover{border-color:var(--acento)}
+button.primario{background:var(--acento);color:#001018;border-color:var(--acento);font-weight:bold}
+button.pendiente{box-shadow:0 0 0 3px rgba(255,200,0,.45);animation:latido 1.2s ease-in-out infinite}
+@keyframes latido{50%{box-shadow:0 0 0 6px rgba(255,200,0,.15)}}
+button.excel{background:#1d6f42;border-color:#2b8a57;color:#fff;font-weight:bold}
+button:disabled{opacity:.5;cursor:not-allowed;animation:none;box-shadow:none}
+.sinAplicar{display:none;font-size:12px;color:var(--alerta);align-self:center}
+.sinAplicar.visible{display:inline}
+.filtros{display:flex;flex-wrap:wrap;gap:12px;align-items:end;padding:14px 20px 6px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--tenue);gap:4px}
+input,select{background:var(--panel2);color:var(--texto);border:1px solid #444;border-radius:6px;padding:8px;font:inherit}
+input.fecha{width:150px;cursor:pointer}
+.rapidos{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 12px;align-items:center}
+.rapidos>span:first-child{font-size:12px;color:var(--tenue);margin-right:4px}
+.rapidos button{padding:5px 10px;font-size:13px}
+.rapidos button.activo{border-color:var(--acento);color:var(--acento)}
+.ayuda{font-size:12px;color:var(--tenue)}
+.espacio{flex:1}
+.aviso{margin:0 20px 10px;padding:10px 14px;border-radius:6px;background:#3a1d1d;color:var(--error);display:none}
+.tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:0 20px}
+.tarjeta{background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:10px 12px}
+.tarjeta small{display:block;color:var(--tenue);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.tarjeta b{font-size:18px;white-space:nowrap}
+.tarjeta.ancha{grid-column:span 2}
+@media (max-width:600px){.tarjeta.ancha{grid-column:auto}}
+.tarjeta.alerta{border-color:#6b5a10}
+.tarjeta.alerta b{color:var(--alerta)}
+.grid2{display:grid;grid-template-columns:minmax(330px,440px) 1fr;gap:14px;padding:14px 20px 20px;align-items:start}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.caja{background:var(--panel);border:1px solid var(--borde);border-radius:8px;overflow:hidden}
+.caja h2{font-size:15px;margin:0;padding:12px 14px;border-bottom:1px solid var(--borde);display:flex;gap:8px;align-items:center}
+.caja h2 .ayuda{font-weight:normal;margin-left:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{position:sticky;top:0;background:#0f3a52;color:#cfefff;text-align:left;padding:8px 10px;font-size:12px;font-weight:bold;z-index:1}
+td{padding:6px 10px;border-bottom:1px solid #262626}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr:hover{background:#202a30}
+#tablaResumen tbody tr{cursor:pointer}
+#tablaResumen tr.sel{background:#173a4d}
+.barra{height:6px;background:#2a2a2a;border-radius:3px;margin-top:4px;overflow:hidden}
+.barra i{display:block;height:100%;background:var(--acento)}
+.advert{display:block;font-size:11px;color:var(--alerta);margin-top:3px}
+tfoot td{font-weight:bold;border-top:2px solid #444;background:#1d1d1d}
+.explica{margin:0;padding:10px 14px;border-top:1px solid var(--borde);font-size:12px;line-height:1.5;color:#bbb}
+.explica b{color:var(--texto)}
+.explica summary{cursor:pointer;color:var(--tenue)}
+.explica[open] summary{margin-bottom:6px;color:var(--texto)}
+.scroll{max-height:calc(100vh - 390px);min-height:300px;overflow:auto}
+tr.hueco td{background:#2a2410;color:#ffd75e;font-size:12px;border-bottom:1px solid #4a3f10}
+.largo{color:#8fd3ff}
+.mono{font-family:Consolas,monospace}
+.vacio{padding:30px;text-align:center;color:var(--tenue)}
+.pie{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--borde);font-size:13px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/">&larr; Menú</a>
+  <h1>⚡ Consumos de Energía</h1>
+</header>
+
+<div class="filtros">
+  <label>Desde <input id="desde"></label>
+  <label>Hasta <input id="hasta"></label>
+  <label>Sector <select id="sector"><option value="">Todos los sectores</option></select></label>
+  <button class="primario" id="btnConsultar">🔍 Consultar</button>
+  <span class="sinAplicar" id="sinAplicar">● Cambios sin aplicar</span>
+  <span class="espacio"></span>
+  <button class="excel" id="btnExcel" disabled title="Descarga lo que se ve en pantalla">⬇ Descargar Excel</button>
+</div>
+<div class="rapidos">
+  <span>Rápido:</span>
+  <button data-r="hoy">Hoy</button>
+  <button data-r="ayer">Ayer</button>
+  <button data-r="mes">Mes actual</button>
+  <button data-r="mesAnt">Mes anterior</button>
+  <span class="ayuda" style="margin-left:10px">Incluye "desde" y excluye "hasta" (ej.: 01/10 00:00 → 02/10 00:00 = el día 1 completo)</span>
+</div>
+
+<div class="aviso" id="aviso"></div>
+
+<div class="tarjetas" id="tarjetas"></div>
+
+<div class="grid2">
+  <div class="caja">
+    <h2>Resumen por sector <span class="ayuda">clic en un sector para ver solo ese</span></h2>
+    <table id="tablaResumen">
+      <thead><tr><th>Sector</th><th class="num">Consumo (kWh)</th><th class="num">Lecturas</th></tr></thead>
+      <tbody></tbody>
+      <tfoot></tfoot>
+    </table>
+    <details class="explica">
+      <summary>ℹ ¿Cómo se calcula el consumo?</summary>
+      Es la diferencia del <b>medidor</b> (Energía total) entre la última lectura del período y la última anterior
+      al período. Es el consumo real aunque falten lecturas.<br>
+      El <b>detalle</b> muestra solo las lecturas que se pudieron guardar. Cada "Consumo" es lo consumido desde la
+      lectura anterior: normalmente 10 minutos (columna "Min."). Cuando hay cortes de comunicación faltan lecturas:
+      casi siempre la lectura siguiente trae todo el consumo del corte (<span class="largo">en celeste: cubre más minutos</span>);
+      a veces no, y esa energía queda solo en el medidor (<span style="color:#ffd75e">⚠ no registrada en el detalle</span>).
+    </details>
+  </div>
+
+  <div class="caja">
+    <h2>Detalle de lecturas <span class="ayuda" id="detalleInfo"></span></h2>
+    <div class="scroll">
+      <table id="tablaDetalle">
+        <thead><tr><th>Sector</th><th>Fecha</th><th>Hora</th><th class="num">Energía total (kWh)</th><th class="num">Consumo (kWh)</th><th class="num">Min.</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="pie">
+      <button id="btnAnt">◀ Anterior</button>
+      <span id="pagina"></span>
+      <button id="btnSig">Siguiente ▶</button>
+      <span class="espacio"></span>
+      <span class="ayuda"><span class="largo">Números en celeste</span>: la lectura cubre más de 10 min (faltaron lecturas)</span>
+      <span class="ayuda" id="porPagina"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const estado = { filtros: null, sectores: [], porPagina: 500, pagina: 0, total: 0 };
+
+// ---------- Utilidades ----------
+
+async function api(url) {
+  const r = await fetch(url);
+  if (r.status === 401) { window.location.href = '/'; throw new Error('Sesión vencida'); }
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(datos.error || 'Error consultando el servidor');
+  return datos;
+}
+
+function mostrarError(err) {
+  $('aviso').textContent = err ? err.message : '';
+  $('aviso').style.display = err ? 'block' : 'none';
+}
+
+const esc = t => String(t === null || t === undefined ? '' : t)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const fmt = (v, d) => Number(v || 0).toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const dos = n => String(n).padStart(2, '0');
+// 'YYYY-MM-DD HH:MM' o 'YYYY-MM-DDTHH:MM'
+const fechaTxt = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)}`;
+const horaTxt = t => t.slice(11, 16);
+const faltanTxt = n => n === 1 ? 'falta 1 lectura' : `faltan ${fmt(n, 0)} lecturas`;
+const duracion = m => m >= 60 ? `${Math.floor(m / 60)} h ${dos(Math.round(m % 60))} min` : `${Math.round(m)} min`;
+
+function parametros(f, extra) {
+  const p = new URLSearchParams({ desde: f.desde, hasta: f.hasta });
+  if (f.sector) p.set('sector', f.sector);
+  Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
+  return p.toString();
+}
+
+// ---------- Rangos rápidos ----------
+
+function rango(tipo) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const d = new Date(hoy), h = new Date(hoy);
+  if (tipo === 'hoy') { h.setDate(h.getDate() + 1); }
+  if (tipo === 'ayer') { d.setDate(d.getDate() - 1); }
+  if (tipo === 'mes') { d.setDate(1); h.setDate(h.getDate() + 1); }
+  if (tipo === 'mesAnt') { d.setDate(1); d.setMonth(d.getMonth() - 1); h.setDate(1); }
+  // false: no dispara onChange, así no se marca como "cambio sin aplicar".
+  fechas.desde.setDate(d, false); fechas.hasta.setDate(h, false);
+  document.querySelectorAll('.rapidos button').forEach(b => b.classList.toggle('activo', b.dataset.r === tipo));
+  consultar();
+}
+
+// Selector de fecha propio, siempre dd/mm/aaaa HH:MM en 24 h, sin importar
+// la configuración del navegador. El valor interno del campo sigue siendo
+// 'YYYY-MM-DDTHH:MM', que es lo que se manda al servidor.
+const fechas = {};
+['desde', 'hasta'].forEach(id => {
+  fechas[id] = flatpickr('#' + id, {
+    locale: flatpickr.l10ns.es,
+    enableTime: true,
+    time_24hr: true,
+    dateFormat: 'Y-m-d\\TH:i',
+    altInput: true,
+    altFormat: 'd/m/Y H:i',
+    altInputClass: 'fecha',
+    allowInput: true,
+    onChange: () => {
+      document.querySelectorAll('.rapidos button').forEach(b => b.classList.remove('activo'));
+      marcarPendiente(true);
+    }
+  });
+});
+
+// Fechas a mano: no consulta sola (evita consultas con fechas a medio
+// escribir), pero avisa que hay cambios sin aplicar.
+function marcarPendiente(si) {
+  $('btnConsultar').classList.toggle('pendiente', si);
+  $('sinAplicar').classList.toggle('visible', si);
+}
+
+// ---------- Consulta ----------
+
+async function consultar() {
+  const f = { desde: $('desde').value, hasta: $('hasta').value, sector: $('sector').value };
+  mostrarError(null);
+  if (!f.desde || !f.hasta || f.hasta <= f.desde) { mostrarError(new Error('"Hasta" tiene que ser posterior a "desde"')); return; }
+
+  const btn = $('btnConsultar');
+  btn.disabled = true; btn.textContent = 'Consultando…';
+  try {
+    const r = await api('/api/energia/resumen?' + parametros(f));
+    marcarPendiente(false);
+    estado.filtros = r.filtros; estado.sectores = r.sectores; estado.porPagina = r.porPagina;
+    estado.total = r.sectores.reduce((a, s) => a + s.lecturas, 0);
+    estado.pagina = 0;
+    pintarResumen();
+    await cargarPagina();
+  } catch (err) {
+    mostrarError(err);
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 Consultar';
+    $('btnExcel').disabled = !estado.total;
+  }
+}
+
+function pintarResumen() {
+  const f = estado.filtros, s = [...estado.sectores].sort((a, b) => b.consumo - a.consumo);
+  const total = s.reduce((a, x) => a + x.consumo, 0);
+  const noReg = s.reduce((a, x) => a + x.noRegistrado, 0);
+  const maximo = s.length ? Math.max(...s.map(x => x.consumo), 0.001) : 1;
+
+  $('tablaResumen').tBodies[0].innerHTML = s.length ? s.map(x => {
+    let notas = '';
+    // Solo se avisa lo que cambia los números: un hueco cuyo consumo vino
+    // en la lectura siguiente no se pierde, y se ve en celeste en el detalle.
+    if (x.noRegistrado > 0.01) notas += `<span class="advert">⚠ ${faltanTxt(x.faltan)} · el detalle suma ${fmt(x.noRegistrado, 1)} kWh menos</span>`;
+    x.advertencias.forEach(a => notas += `<span class="advert">⚠ ${esc(a)}</span>`);
+    return `<tr data-s="${esc(x.sector)}" class="${f.sector === x.sector ? 'sel' : ''}">
+      <td>${esc(x.sector)}<div class="barra"><i style="width:${Math.max(0, x.consumo) / maximo * 100}%"></i></div>${notas}</td>
+      <td class="num">${fmt(x.consumo, 2)}</td><td class="num">${fmt(x.lecturas, 0)}</td></tr>`;
+  }).join('') : '<tr><td colspan="3" class="vacio">No hay lecturas en ese período</td></tr>';
+  $('tablaResumen').tFoot.innerHTML = s.length > 1
+    ? `<tr><td>Total</td><td class="num">${fmt(total, 2)}</td><td class="num">${fmt(estado.total, 0)}</td></tr>` : '';
+  document.querySelectorAll('#tablaResumen tbody tr[data-s]').forEach(tr => tr.onclick = () => { $('sector').value = tr.dataset.s; consultar(); });
+
+  const minutos = (Date.parse(f.hasta + ':00Z') - Date.parse(f.desde + ':00Z')) / 60000;
+  const tarjetas = [
+    ['Consumo total (medidor)', `${fmt(total, 2)} kWh`],
+    ['Rango', `${fechaTxt(f.desde)} ${horaTxt(f.desde)} → ${fechaTxt(f.hasta)} ${horaTxt(f.hasta)}`, 'ancha'],
+    ['Duración', minutos >= 2880 ? `${fmt(minutos / 1440, 1)} días` : `${fmt(minutos / 60, 0)} horas`],
+    ['Sector', f.sector || `Todos (${s.length})`],
+    ['Lecturas guardadas', fmt(estado.total, 0)],
+  ];
+  // Solo cuando hay consumo que el detalle no tiene (lecturas perdidas).
+  if (noReg > 0.01) tarjetas.push(['No registrado en el detalle', `⚠ ${fmt(noReg, 1)} kWh`, 'alerta']);
+  $('tarjetas').innerHTML = tarjetas.map(([k, v, c]) => `<div class="tarjeta ${c || ''}"><small>${k}</small><b>${esc(v)}</b></div>`).join('');
+}
+
+async function cargarPagina() {
+  const tbody = $('tablaDetalle').tBodies[0];
+  if (!estado.total) {
+    tbody.innerHTML = '<tr><td colspan="6" class="vacio">Sin lecturas</td></tr>';
+  } else {
+    const filas = await api('/api/energia/detalle?' + parametros(estado.filtros, { pagina: estado.pagina }));
+    tbody.innerHTML = filas.map(filaDetalle).join('');
+  }
+  const paginas = Math.max(1, Math.ceil(estado.total / estado.porPagina));
+  const desde = estado.pagina * estado.porPagina;
+  $('pagina').textContent = `Página ${estado.pagina + 1} de ${paginas}`;
+  $('detalleInfo').textContent = estado.total
+    ? `lecturas ${fmt(desde + 1, 0)}–${fmt(Math.min(estado.total, desde + estado.porPagina), 0)} de ${fmt(estado.total, 0)}` : '';
+  $('porPagina').textContent = `${estado.porPagina} lecturas por página · el Excel trae todas`;
+  $('btnAnt').disabled = estado.pagina === 0;
+  $('btnSig').disabled = estado.pagina >= paginas - 1;
+  document.querySelector('.scroll').scrollTop = 0;
+}
+
+// Fila amarilla solo cuando se perdió consumo. Si el consumo del hueco vino
+// en esta lectura, alcanza con el celeste en Consumo/Min. y el detalle al
+// pasar el mouse.
+function filaDetalle(l) {
+  let aviso = '', titulo = '';
+  if (l.huecoDesde && l.perdido > 0) {
+    aviso = `<tr class="hueco"><td colspan="6">⚠ ${esc(l.sector)}: sin lecturas entre las ${horaTxt(l.huecoDesde)} del ${fechaTxt(l.huecoDesde)} ` +
+            `y las ${horaTxt(l.t)} (${faltanTxt(l.huecoFaltan)}) · ${fmt(l.perdido, 1)} kWh no registrados en el detalle (sí en el medidor)</td></tr>`;
+  } else if (l.perdido > 0) {
+    aviso = `<tr class="hueco"><td colspan="6">⚠ ${esc(l.sector)} ${horaTxt(l.t)}: ${fmt(l.perdido, 1)} kWh registrados por el medidor no están en esta lectura</td></tr>`;
+  } else if (l.huecoDesde) {
+    titulo = ` title="Cubre ${duracion(l.minutos)}: ${faltanTxt(l.huecoFaltan)} desde las ${horaTxt(l.huecoDesde)}. El consumo de ese lapso está incluido en esta lectura."`;
+  }
+  const largo = l.minutos !== null && l.minutos > 15;
+  return aviso + `<tr${titulo}><td>${esc(l.sector)}</td><td>${fechaTxt(l.t)}</td><td class="mono">${horaTxt(l.t)}</td>
+    <td class="num">${fmt(l.energia, 3)}</td><td class="num ${largo ? 'largo' : ''}">${l.consumo === null ? '—' : fmt(l.consumo, 3)}</td>
+    <td class="num ${largo ? 'largo' : ''}">${l.minutos === null ? '—' : fmt(l.minutos, 0)}</td></tr>`;
+}
+
+// ---------- Eventos ----------
+
+const conAviso = fn => async (...args) => { try { await fn(...args); } catch (err) { mostrarError(err); } };
+
+document.querySelectorAll('.rapidos button').forEach(b => b.onclick = () => rango(b.dataset.r));
+$('btnConsultar').onclick = consultar;
+$('sector').onchange = consultar;
+$('btnAnt').onclick = conAviso(async () => { estado.pagina--; await cargarPagina(); });
+$('btnSig').onclick = conAviso(async () => { estado.pagina++; await cargarPagina(); });
+// Descarga lo último consultado (lo que se ve en pantalla), no lo que haya
+// quedado sin aplicar en los filtros.
+$('btnExcel').onclick = () => { if (estado.filtros) window.location.href = '/api/energia/excel?' + parametros(estado.filtros); };
+
+conAviso(async () => {
+  const sectores = await api('/api/energia/sectores');
+  sectores.forEach(s => $('sector').add(new Option(s, s)));
+  rango('mes');
+})();
+</script>
+</body>
+</html>
