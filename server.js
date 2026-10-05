@@ -2214,13 +2214,13 @@ let canoActual = '';
 let lecturaEnCurso = false;
 
 // Al apagarse la variable del PLC, seguimos tomando muestras
-// durante este tiempo extra antes de cerrar el ensayo y generar el PDF.
+// durante este tiempo extra antes de cerrar el ensayo y guardarlo.
 const GRACIA_FIN_ENSAYO_MS = 2000;
 
 // Tope de seguridad: si la variable M12 del PLC queda pegada en ON (falla
 // de cableado, corte de comunicación, bug del programa del PLC) sin este
 // límite el ensayo seguiría tomando muestras para siempre, creciendo sin
-// cota en memoria y generando un PDF con un gráfico imposible de renderizar.
+// cota en memoria y guardando un ensayo con un gráfico imposible de renderizar.
 // A 1 muestra/segundo, esto son 30 minutos de ensayo — muy por encima de
 // la duración real de un ensayo de presión normal.
 const MAX_MUESTRAS_ENSAYO = 1800;
@@ -2291,14 +2291,21 @@ async function crearClienteEnsayo() {
 }
 
 // ======================================================
-// PDF ENSAYO
+// GUARDADO DEL ENSAYO TERMINADO
 // ======================================================
+// Al terminar el ensayo se guardan SOLO las muestras (base local y, desde
+// ahí, SQL Server). El PDF no se genera solo: lo arma el usuario desde el
+// Visor de Ensayos, con el botón "Generar PDF", cuando lo necesita. Así no se
+// llena el disco de PDFs y los ensayos de prueba no dejan archivos de más.
 
-async function generarPDFEnsayo() {
+const INTENTOS_GUARDAR_ENSAYO = 3;
+const ESPERA_ENTRE_INTENTOS_MS = 1000;
+
+async function guardarEnsayoTerminado() {
 
     if (datosEnsayo.length <= 0) {
 
-        console.log('Sin datos para PDF');
+        console.log('Ensayo sin muestras: no se guarda nada');
 
         return;
     }
@@ -2310,70 +2317,43 @@ async function generarPDFEnsayo() {
         muestras: [...datosEnsayo]
     };
 
-    // Los datos se guardan ANTES de armar el PDF: si el PDF falla (disco
-    // lleno, error al dibujar el gráfico), el ensayo queda igual en la base
-    // y se puede generar después desde el Visor de Ensayos.
-    let ensayoId = null;
+    // Como ya no queda un PDF de respaldo, si la base local falla se
+    // reintenta unos segundos; si igual no se puede, las muestras quedan
+    // completas en el log para poder recuperarlas a mano.
+    let ultimoError = null;
 
-    try {
-        ensayoId = await ensayosDatos.guardarEnsayo(ensayo);
+    for (let intento = 1; intento <= INTENTOS_GUARDAR_ENSAYO; intento++) {
 
-        // Sube el ensayo a SQL Server sin esperarlo (no frena el PDF ni el monitor).
-        ensayosDatos.sincronizar();
-    } catch (err) {
-        console.error('No se pudieron guardar los datos del ensayo en la base:', err.message);
-    }
+        try {
 
-    let rutaArchivo = null;
+            const ensayoId = await ensayosDatos.guardarEnsayo(ensayo);
 
-    try {
+            console.log(
+                `Ensayo guardado (id ${ensayoId}): OP ${ensayo.op}, Caño ${ensayo.cano}, ${ensayo.muestras.length} muestras.`
+            );
 
-        const nombreArchivo = ensayosDatos.nombreArchivoPdf(
-            ensayo.op,
-            ensayo.cano,
-            ensayosDatos.fechaLocal(ensayo.fecha)
-        );
+            // Sube el ensayo a SQL Server sin esperarlo (no frena el monitor del PLC).
+            ensayosDatos.sincronizar();
 
-        rutaArchivo = path.join(__dirname, 'pdfs', nombreArchivo);
+            return;
 
-        const pdf = await ensayosDatos.generarPdfEnsayo(ensayo);
+        } catch (err) {
 
-        await fs.promises.writeFile(rutaArchivo, pdf);
+            ultimoError = err;
 
-        console.log(`PDF generado: ${nombreArchivo}`);
+            console.error(`No se pudo guardar el ensayo (intento ${intento} de ${INTENTOS_GUARDAR_ENSAYO}):`, err.message);
 
-        // Registro duradero de que el ensayo ocurrió (aparte del propio PDF).
-        db.run(
-            `INSERT INTO ensayos (op, cano, archivo) VALUES (?, ?, ?)`,
-            [ensayo.op, ensayo.cano, nombreArchivo],
-            err => {
-                if (err) console.error('Error registrando el ensayo en la base:', err.message);
+            if (intento < INTENTOS_GUARDAR_ENSAYO) {
+                await new Promise(resolver => setTimeout(resolver, ESPERA_ENTRE_INTENTOS_MS));
             }
-        );
-
-        if (ensayoId !== null) {
-            ensayosDatos.vincularArchivo(ensayoId, nombreArchivo)
-                .catch(err => console.error('Error vinculando el PDF al ensayo guardado:', err.message));
         }
-
-    } catch (err) {
-
-        // Si quedó un archivo a medio escribir lo borramos para que no
-        // aparezca en el Visor como un PDF roto.
-        if (rutaArchivo) {
-            await fs.promises.unlink(rutaArchivo).catch(() => {});
-        }
-
-        console.error(
-            `⚠️ PDF DE ENSAYO NO GENERADO (OP ${ensayo.op}, Caño ${ensayo.cano}, ${ensayo.muestras.length} muestras). ` +
-            (ensayoId !== null
-                ? `Los datos quedaron guardados (ensayo ${ensayoId}): se puede generar el PDF desde el Visor de Ensayos.`
-                : 'Los datos tampoco se pudieron guardar.'),
-            err
-        );
-
-        throw err;
     }
+
+    console.error(
+        `⚠️ ENSAYO NO GUARDADO (OP ${ensayo.op}, Caño ${ensayo.cano}, ${ensayo.muestras.length} muestras). ` +
+        `Fecha ${ensayosDatos.fechaLocal(ensayo.fecha)}. Muestras: ${JSON.stringify(ensayo.muestras)}`,
+        ultimoError
+    );
 }
 
 // ======================================================
@@ -2391,7 +2371,7 @@ setInterval(async () => {
     let socket = null;
 
     // Para distinguir un fallo de comunicación con el PLC de cualquier otro
-    // error de este ciclo (ej.: el armado del PDF).
+    // error de este ciclo (ej.: el guardado del ensayo).
     let leyoPlc = false;
 
     try {
@@ -2519,7 +2499,7 @@ setInterval(async () => {
 
             tiempoApagado = null;
 
-            await generarPDFEnsayo();
+            await guardarEnsayoTerminado();
 
             datosEnsayo = [];
         }

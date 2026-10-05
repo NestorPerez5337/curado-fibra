@@ -2,9 +2,10 @@
 // ENSAYOS DE PRESIÓN: DATOS GUARDADOS + PDF BAJO DEMANDA
 // ======================================================
 //
-// Cada ensayo guarda en la base sus muestras de presión, así el PDF se
-// puede volver a generar (idéntico al automático) cuando se quiera, sin
-// depender de que el archivo siga en la carpeta pdfs/.
+// Cada ensayo guarda en la base sus muestras de presión (unos pocos KB). El
+// PDF NO se genera solo: se arma en el momento, desde esas muestras, cuando el
+// usuario aprieta "Generar PDF" en el Visor de Ensayos, y se descarga sin
+// guardarse en el servidor. Así no se acumulan archivos en el disco.
 //
 // Se monta desde server.js con:
 //   const ensayosDatos = require('./ensayos-datos')({ db });
@@ -40,6 +41,20 @@ function dateDesdeFechaLocal(texto) {
     return new Date(texto.replace(' ', 'T'));
 }
 
+// Armar un PDF dibuja un gráfico y usa bastante memoria: si varias personas
+// piden uno a la vez, se hacen de a uno (los demás esperan su turno) en vez de
+// cargar al servidor con varios en paralelo.
+let colaPdf = Promise.resolve();
+
+function enCola(tarea) {
+
+    const resultado = colaPdf.then(tarea);
+
+    colaPdf = resultado.catch(() => {});
+
+    return resultado;
+}
+
 function nombreArchivoPdf(op, cano, fechaTexto) {
 
     const limpiar = v => String(v).replace(/[^\w-]/g, '_');
@@ -49,7 +64,7 @@ function nombreArchivoPdf(op, cano, fechaTexto) {
 }
 
 // ======================================================
-// PDF (mismo diseño que el ensayo automático de siempre)
+// PDF (mismo diseño que tenían los PDF automáticos de antes)
 // ======================================================
 
 async function generarPdfEnsayo({ op, cano, fecha, muestras }) {
@@ -219,10 +234,6 @@ module.exports = function crearEnsayosDatos({ db }) {
         );
 
         return resultado.lastID;
-    }
-
-    async function vincularArchivo(id, archivo) {
-        await ejecutar(`UPDATE ensayos_datos SET archivo = ? WHERE id = ?`, [archivo, id]);
     }
 
     // Sube a SQL Server los ensayos que todavía no están ahí. Esta base
@@ -404,12 +415,12 @@ module.exports = function crearEnsayosDatos({ db }) {
                     return res.status(404).send('Ensayo no encontrado');
                 }
 
-                const pdf = await generarPdfEnsayo({
+                const pdf = await enCola(() => generarPdfEnsayo({
                     op: ensayo.op,
                     cano: ensayo.cano,
                     fecha: dateDesdeFechaLocal(ensayo.fecha),
                     muestras: ensayo.muestras
-                });
+                }));
 
                 res.set({
                     'Content-Type': 'application/pdf',
@@ -427,7 +438,6 @@ module.exports = function crearEnsayosDatos({ db }) {
 
     return {
         guardarEnsayo,
-        vincularArchivo,
         sincronizar,
         resumenSincronizacion,
         generarPdfEnsayo,
