@@ -9,8 +9,6 @@ const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 
 const fs = require('fs');
-const PDFDocument = require('pdfkit');
-const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 
 const app = express();
 
@@ -2135,15 +2133,8 @@ app.get('/health', (req, res) => {
 // ENSAYO PRESIÓN
 // ======================================================
 
-const ChartDataLabels = require('chartjs-plugin-datalabels');
+const ensayosDatos = require('./ensayos-datos')({ db });
 
-const chartCanvas = new ChartJSNodeCanvas({
-    width: 1200,
-    height: 600,
-    chartCallback: (ChartJS) => {
-        ChartJS.register(ChartDataLabels);
-    }
-});
 const ENSAYO_IP = '10.10.104.37';
 const ENSAYO_PUERTO = 502;
 
@@ -2228,180 +2219,79 @@ async function crearClienteEnsayo() {
 
 async function generarPDFEnsayo() {
 
+    if (datosEnsayo.length <= 0) {
+
+        console.log('Sin datos para PDF');
+
+        return;
+    }
+
+    const ensayo = {
+        op: String(opActual),
+        cano: String(canoActual),
+        fecha: new Date(),
+        muestras: [...datosEnsayo]
+    };
+
+    // Los datos se guardan ANTES de armar el PDF: si el PDF falla (disco
+    // lleno, error al dibujar el gráfico), el ensayo queda igual en la base
+    // y se puede generar después desde el Visor de Ensayos.
+    let ensayoId = null;
+
+    try {
+        ensayoId = await ensayosDatos.guardarEnsayo(ensayo);
+
+        // Sube el ensayo a SQL Server sin esperarlo (no frena el PDF ni el monitor).
+        ensayosDatos.sincronizar();
+    } catch (err) {
+        console.error('No se pudieron guardar los datos del ensayo en la base:', err.message);
+    }
+
+    let rutaArchivo = null;
+
     try {
 
-        if (datosEnsayo.length <= 0) {
+        const nombreArchivo = ensayosDatos.nombreArchivoPdf(
+            ensayo.op,
+            ensayo.cano,
+            ensayosDatos.fechaLocal(ensayo.fecha)
+        );
 
-            console.log('Sin datos para PDF');
+        rutaArchivo = path.join(__dirname, 'pdfs', nombreArchivo);
 
-            return;
-        }
+        const pdf = await ensayosDatos.generarPdfEnsayo(ensayo);
 
-const ahora = new Date();
-
-const fechaArchivo =
-    ahora.getFullYear() +
-    String(ahora.getMonth() + 1).padStart(2, '0') +
-    String(ahora.getDate()).padStart(2, '0') +
-    '_' +
-    String(ahora.getHours()).padStart(2, '0') +
-    String(ahora.getMinutes()).padStart(2, '0') +
-    String(ahora.getSeconds()).padStart(2, '0');
-
-const nombreArchivo =
-    `OP_${opActual}_CANO_${canoActual}_${fechaArchivo}.pdf`;
-
-const rutaArchivo =
-    path.join(__dirname, 'pdfs', nombreArchivo);
-
-        const labels =
-            datosEnsayo.map((_, i) =>
-                (i ).toFixed(1)
-            );
-
-       const configuration = {
-    type: 'line',
-
-    data: {
-        labels,
-
-        datasets: [{
-            label: 'Presión',
-            data: datosEnsayo,
-
-            borderWidth: 2,
-            fill: false,
-            tension: 0.1,
-
-            pointRadius: 5,
-            pointHoverRadius: 5
-        }]
-    },
-
-    options: {
-
-        responsive: false,
-
-        plugins: {
-
-            title: {
-                display: true,
-                text: `Ensayo OP ${opActual} - Caño ${canoActual}`
-            },
-
-            datalabels: {
-
-                color: 'black',
-
-                anchor: 'end',
-
-                align: 'top',
-
-                offset: 8, // Subimos un poquito el offset para que al estar vertical no toque el punto
-
-                rotation: -90, // 👈 ¡ESTA ES LA LÍNEA MÁGICA! Pone los números verticales
-
-                font: {
-                    size: 8, // Achicamos un pelín el texto para que entre impecable
-                    weight: 'bold'
-                },
-
-                formatter: value => value
-            }
-        },
-
-        scales: {
-
-            x: {
-                title: {
-                    display: true,
-                    text: 'Tiempo (s)'
-                }
-            },
-
-            y: {
-                title: {
-                    display: true,
-                    text: 'Presión'
-                }
-            }
-        }
-    },
-
-    plugins: [ChartDataLabels]
-};
-
-        const imageBuffer =
-            await chartCanvas.renderToBuffer(configuration);
-
-        const doc =
-            new PDFDocument({
-                margin: 30
-            });
-
-        const stream =
-            fs.createWriteStream(rutaArchivo);
-
-        doc.pipe(stream);
-
-        doc.fontSize(22)
-            .text('ENSAYO DE PRESIÓN', {
-                align: 'center'
-            });
-
-        doc.moveDown();
-
-        doc.fontSize(14)
-            .text(`OP: ${opActual}`);
-
-        doc.text(`Caño: ${canoActual}`);
-
-        doc.text(`Fecha: ${new Date().toLocaleString()}`);
-
-        doc.text(`Muestras: ${datosEnsayo.length}`);
-
-        doc.moveDown();
-
-        doc.image(imageBuffer, {
-            fit: [520, 320],
-            align: 'center'
-        });
-
-        doc.end();
-
-        // Esperamos a que el archivo termine de escribirse en disco de
-        // verdad (evento 'finish') antes de dar el ensayo por generado —
-        // antes la función volvía apenas se llamaba doc.end(), sin
-        // confirmar que la escritura hubiera terminado ni enterarse si
-        // fallaba (createWriteStream no tenía listener de 'error').
-        await new Promise((resolve, reject) => {
-            stream.on('finish', resolve);
-            stream.on('error', reject);
-        });
+        await fs.promises.writeFile(rutaArchivo, pdf);
 
         console.log(`PDF generado: ${nombreArchivo}`);
 
-        // Este es el único registro duradero de que el ensayo ocurrió
-        // (aparte del propio PDF en el filesystem): antes esta tabla
-        // existía pero nunca se insertaba nada en ella.
+        // Registro duradero de que el ensayo ocurrió (aparte del propio PDF).
         db.run(
             `INSERT INTO ensayos (op, cano, archivo) VALUES (?, ?, ?)`,
-            [String(opActual), String(canoActual), nombreArchivo],
+            [ensayo.op, ensayo.cano, nombreArchivo],
             err => {
                 if (err) console.error('Error registrando el ensayo en la base:', err.message);
             }
         );
 
+        if (ensayoId !== null) {
+            ensayosDatos.vincularArchivo(ensayoId, nombreArchivo)
+                .catch(err => console.error('Error vinculando el PDF al ensayo guardado:', err.message));
+        }
+
     } catch (err) {
 
-        // Antes este error solo se logueaba acá y la función terminaba
-        // "bien" igual (la promesa nunca se rechazaba): el ensayo
-        // desaparecía sin PDF, sin fila en la base y sin ningún rastro
-        // más que esta línea. Ahora lo logueamos con todo el contexto y
-        // lo volvemos a lanzar, para que quien llama a esta función se
-        // entere de que el ensayo se perdió en vez de asumir que salió bien.
+        // Si quedó un archivo a medio escribir lo borramos para que no
+        // aparezca en el Visor como un PDF roto.
+        if (rutaArchivo) {
+            await fs.promises.unlink(rutaArchivo).catch(() => {});
+        }
+
         console.error(
-            `⚠️ PDF DE ENSAYO PERDIDO (OP ${opActual}, Caño ${canoActual}, ${datosEnsayo.length} muestras): `,
+            `⚠️ PDF DE ENSAYO NO GENERADO (OP ${ensayo.op}, Caño ${ensayo.cano}, ${ensayo.muestras.length} muestras). ` +
+            (ensayoId !== null
+                ? `Los datos quedaron guardados (ensayo ${ensayoId}): se puede generar el PDF desde el Visor de Ensayos.`
+                : 'Los datos tampoco se pudieron guardar.'),
             err
         );
 
@@ -2631,7 +2521,7 @@ app.get('/api/ensayos', requierePermiso('visor'), (req, res) => {
         ensayos.push({
             op: op,
             cano: cano,
-            fecha: stats.mtime.toISOString().slice(0, 19).replace('T', ' '),
+            fecha: ensayosDatos.fechaLocal(stats.mtime),
             archivo: nombreArchivo
         });
     });
@@ -2641,6 +2531,9 @@ app.get('/api/ensayos', requierePermiso('visor'), (req, res) => {
 
     res.json(ensayos);
 });
+
+// Ensayos con las muestras guardadas en la base (gráfico y PDF bajo demanda)
+ensayosDatos.montarRutas(app, { requierePermiso });
 // ======================================================
 // SERVER
 // ======================================================
