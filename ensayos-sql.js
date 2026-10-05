@@ -144,4 +144,17 @@ async function guardarEnsayo({ op, cano, fecha, muestras }) {
     }
 }
 
-module.exports = { estaConfigurado, guardarEnsayo };
+// Prueba la conexión con una consulta mínima (la usa el panel de Estado del
+// Sistema). Devuelve cuántos ms tardó; si no responde, lanza el error.
+async function probar() {
+
+    const pool = await obtenerPool();
+
+    const inicio = Date.now();
+
+    await pool.request().query('SELECT 1 AS ok');
+
+    return Date.now() - inicio;
+}
+
+module.exports = { estaConfigurado, guardarEnsayo, probar };

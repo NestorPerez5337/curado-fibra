@@ -60,6 +60,7 @@
             <button type="button" id="btn-menu-compresores" class="btn-menu" onclick="window.location.href='/compresores'">🌀 Compresores</button>
             <button type="button" id="btn-menu-historial-compresores" class="btn-menu" onclick="window.location.href='/compresores/historial'">📊 Historial de Compresores</button>
             <button type="button" id="btn-menu-monitor" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/monitor'">🔍 Monitor de Variables</button>
+            <button type="button" id="btn-menu-estado" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/estado'">🖥️ Estado del Sistema</button>
             <button type="button" id="btn-menu-admin" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/admin'">🛠️ Administración de Usuarios</button>
             <button type="button" id="btn-menu-log" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/log'">📜 Registro de Cambios</button>
         </div>
@@ -174,6 +175,7 @@
             document.getElementById('btn-menu-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
             document.getElementById('btn-menu-historial-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
             document.getElementById('btn-menu-monitor').style.display = yo.esAdmin ? 'flex' : 'none';
+            document.getElementById('btn-menu-estado').style.display = yo.esAdmin ? 'flex' : 'none';
             document.getElementById('btn-menu-admin').style.display = yo.esAdmin ? 'flex' : 'none';
             document.getElementById('btn-menu-log').style.display = yo.esAdmin ? 'flex' : 'none';
 

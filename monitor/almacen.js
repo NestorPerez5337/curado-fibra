@@ -3,8 +3,9 @@
 // ======================================================
 //
 // Base propia (data/monitor.db), separada de recetas.db: el registro de
-// eventos puede crecer rápido y así no infla los backups ni compite por
-// bloqueos con el resto del programa.
+// eventos puede crecer rápido y así no compite por bloqueos con el resto
+// del programa. Entra en cada backup (monitor_AAAAMMDD_HHMMSS.db) junto
+// con la base principal: ver respaldar().
 
 const fs = require('fs');
 const path = require('path');
@@ -227,6 +228,36 @@ async function listarEventos({ variableId, tipo, desde, hasta, limite }) {
     return todos(sql, params);
 }
 
+// Copia consistente de la base (VACUUM INTO funciona aunque se esté
+// escribiendo en simultáneo, a diferencia de copiar el archivo a mano).
+// El archivo de destino no debe existir.
+async function respaldar(rutaDestino) {
+
+    await lista;
+
+    await ejecutar(`VACUUM INTO ?`, [rutaDestino]);
+}
+
+// Cantidad de eventos por tipo desde una fecha local 'YYYY-MM-DD HH:MM:SS'.
+async function contarEventosDesde(desde) {
+
+    await lista;
+
+    return todos(
+        `SELECT tipo, COUNT(*) AS cantidad FROM eventos WHERE fecha_hora >= ? GROUP BY tipo`,
+        [desde]
+    );
+}
+
+async function totalEventos() {
+
+    await lista;
+
+    const fila = await uno(`SELECT COUNT(*) AS cantidad FROM eventos`);
+
+    return fila ? fila.cantidad : 0;
+}
+
 async function purgarEventosViejos(dias) {
 
     await lista;
@@ -249,5 +280,8 @@ module.exports = {
     guardarEstado,
     registrarEvento,
     listarEventos,
+    respaldar,
+    contarEventosDesde,
+    totalEventos,
     purgarEventosViejos
 };

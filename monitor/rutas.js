@@ -326,6 +326,51 @@ module.exports = function montarMonitor(app, { requiereAdmin, requiereAdminPagin
         }
     });
 
+    // Resumen para el panel de Estado del Sistema: cuántas variables están
+    // bien, cuáles tienen problemas y cuántas novedades hubo en las últimas 24 h.
+    async function resumen() {
+
+        const variables = await almacen.listarVariables();
+        const vivo = motor.instantanea();
+
+        const activas = variables.filter(v => v.activo);
+        const porEstado = {};
+        const conProblema = [];
+
+        for (const v of activas) {
+
+            const actual = vivo[v.id] || {};
+            const estado = actual.estado || 'desconocido';
+
+            porEstado[estado] = (porEstado[estado] || 0) + 1;
+
+            if (estado !== 'ok' && estado !== 'desconocido') {
+                conProblema.push({
+                    nombre: v.nombre,
+                    estado,
+                    desde: actual.estado_desde || null,
+                    detalle: actual.detalle || null
+                });
+            }
+        }
+
+        const hace24h = almacen.fechaLocal(new Date(Date.now() - 24 * 60 * 60 * 1000));
+        const eventos24h = {};
+
+        for (const fila of await almacen.contarEventosDesde(hace24h)) {
+            eventos24h[fila.tipo] = fila.cantidad;
+        }
+
+        return {
+            total: variables.length,
+            activas: activas.length,
+            porEstado,
+            conProblema,
+            eventos24h,
+            totalEventos: await almacen.totalEventos()
+        };
+    }
+
     app.get('/api/monitor/eventos', requiereAdmin, async (req, res) => {
 
         const q = req.query;
@@ -345,4 +390,6 @@ module.exports = function montarMonitor(app, { requiereAdmin, requiereAdminPagin
             res.status(500).send('Error');
         }
     });
+
+    return { resumen };
 };
