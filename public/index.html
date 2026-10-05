@@ -9,10 +9,35 @@
         .btn-dev { padding: 25px; cursor: pointer; background: #222; color: #fff; border: 1px solid #444; border-radius: 8px; font-weight: bold; }
         .btn-dev:hover { border-color: #007bff; background: #2a2a2a; }
         
-        #login-screen, #menu-screen { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:2000; display:flex; justify-content:center; align-items:center; }
-        #menu-screen { display:none; }
-        .btn-menu { padding: 18px; background:#222; color:#fff; border:1px solid #444; border-radius:8px; font-weight:bold; cursor:pointer; width: 87%; font-size: 15px; display:flex; align-items:center; justify-content:center; gap:8px; }
-        .btn-menu:hover { border-color:#007bff; background:#2a2a2a; }
+        #login-screen { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:2000; display:flex; justify-content:center; align-items:center; }
+
+        /* Menú principal: botones grandes por sección, con buscador. Hace scroll
+           si la pantalla es baja, así no se corta ningún acceso. */
+        #menu-screen { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#121212; z-index:2000; overflow-y:auto; }
+        .menu-contenedor { max-width:1100px; margin:0 auto; padding:24px 20px 40px; text-align:left; }
+        .menu-cabecera { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+        .menu-cabecera h2 { margin:0; color:#007bff; font-size:22px; }
+        .menu-usuario { display:flex; align-items:center; gap:12px; color:#aaa; font-size:14px; }
+        .btn-salir { padding:9px 16px; background:#dc3545; color:#fff; border:none; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; }
+        #menu-buscar { width:100%; box-sizing:border-box; padding:13px 14px; font-size:15px; background:#1f1f1f; color:#fff; border:1px solid #333; border-radius:8px; }
+        #menu-buscar:focus { outline:none; border-color:#007bff; }
+        .menu-seccion-titulo { font-size:13px; color:#8a8a8a; margin:24px 0 10px; }
+        .menu-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:14px; }
+        .tile-menu { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:26px 12px; background:#1f1f1f; color:#fff; border:1px solid #333; border-top:4px solid var(--color); border-radius:8px; font-family:inherit; font-size:15px; font-weight:bold; text-align:center; text-decoration:none; cursor:pointer; }
+        .tile-menu .icono { display:flex; color:var(--color); }
+        .tile-menu .icono svg { width:36px; height:36px; }
+        .tile-menu:hover { background:#2a2a2a; border-color:var(--color); }
+        .menu-chips { display:flex; flex-wrap:wrap; gap:10px; }
+        .chip-menu { display:inline-flex; align-items:center; gap:8px; padding:13px 16px; background:#1f1f1f; color:#fff; border:1px solid #7a6212; border-radius:6px; font-family:inherit; font-size:14px; text-decoration:none; cursor:pointer; }
+        .chip-menu .icono { display:flex; color:var(--color); }
+        .chip-menu .icono svg { width:18px; height:18px; }
+        .chip-menu:hover { background:#2a2a2a; border-color:#ffc107; }
+        .tile-menu:focus-visible, .chip-menu:focus-visible, .btn-salir:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+        .menu-vacio { color:#888; font-size:14px; margin:30px 0; text-align:center; }
+        @media (max-width:520px) {
+            .menu-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+            .tile-menu { padding:20px 8px; font-size:14px; }
+        }
         #panel-devanadoras { display:none; }
         .btn-volver { background:#444; color:white; border:none; border-radius:4px; padding:8px 14px; cursor:pointer; font-weight:bold; margin:15px; }
         .modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#1f1f1f; padding:20px; border-radius:10px; border:2px solid #007bff; z-index:1000; width:880px; }
@@ -49,30 +74,20 @@
 </div>
 
     <div id="menu-screen">
-    <div style="background: #1f1f1f; padding: 30px; border-radius: 10px; border: 2px solid #333; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 320px;">
-        <h2 id="menu-titulo" style="color: #007bff; margin-bottom: 20px; font-family: sans-serif; font-size: 20px;">MENÚ PRINCIPAL</h2>
+        <div class="menu-contenedor">
+            <div class="menu-cabecera">
+                <h2>SISTEMA DE CONTROL</h2>
+                <div class="menu-usuario">
+                    <span id="menu-usuario"></span>
+                    <button type="button" class="btn-salir" onclick="logout()">Cerrar sesión</button>
+                </div>
+            </div>
 
-        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 10px;">
-            <button type="button" id="btn-menu-devanadoras" class="btn-menu" onclick="abrirDevanadoras()">🎛️ Control de Devanadoras</button>
-            <button type="button" id="btn-menu-horometros" class="btn-menu" onclick="window.location.href='/horometros'">⏱️ Horómetros</button>
-            <button type="button" id="btn-menu-visor" class="btn-menu" onclick="window.location.href='/visor'">📋 Visor de Ensayos</button>
-            <button type="button" id="btn-menu-visor-ph" class="btn-menu" onclick="window.location.href='/visor-ph'">📈 Visor de Ensayos PH</button>
-            <button type="button" id="btn-menu-energia" class="btn-menu" onclick="window.location.href='/energia'">⚡ Consumos de Energía</button>
-            <button type="button" id="btn-menu-compresores" class="btn-menu" onclick="window.location.href='/compresores'">🌀 Compresores</button>
-            <button type="button" id="btn-menu-historial-compresores" class="btn-menu" onclick="window.location.href='/compresores/historial'">📊 Historial de Compresores</button>
-            <button type="button" id="btn-menu-monitor" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/monitor'">🔍 Monitor de Variables</button>
-            <button type="button" id="btn-menu-estado" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/estado'">🖥️ Estado del Sistema</button>
-            <button type="button" id="btn-menu-admin" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/admin'">🛠️ Administración de Usuarios</button>
-            <button type="button" id="btn-menu-log" class="btn-menu" style="display:none; border-color:#ffc107;" onclick="window.location.href='/log'">📜 Registro de Cambios</button>
+            <input type="search" id="menu-buscar" placeholder="Buscar sección…" autocomplete="off" aria-label="Buscar sección" oninput="renderMenu()" onkeydown="teclaBuscador(event)">
+
+            <div id="menu-secciones"></div>
         </div>
-
-        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
-
-        <button type="button" onclick="logout()" style="padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; width: 87%; font-size: 14px;">
-            Cerrar sesión
-        </button>
     </div>
-</div>
 
     <div id="panel-devanadoras">
     <button class="btn-volver" onclick="volverMenu()">&larr; Volver al menú</button>
@@ -167,22 +182,121 @@
             mostrarMenu();
         }
 
+        // Iconos del menú: Tabler Icons (estilo "outline", licencia MIT,
+        // https://tabler.io/icons) pegados acá como SVG para que la pantalla no
+        // dependa de internet. Para usar otro, copiar su SVG y agregarlo a la lista.
+        const ICONOS = {
+            'adjustments-horizontal': '<path d="M14 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 6l8 0"/><path d="M16 6l4 0"/><path d="M8 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 12l2 0"/><path d="M10 12l10 0"/><path d="M17 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 18l11 0"/><path d="M19 18l1 0"/>',
+            'clock-hour-4': '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 12l3 2"/><path d="M12 7v5"/>',
+            'file-description': '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M9 17h6"/><path d="M9 13h6"/>',
+            'chart-line': '<path d="M4 19l16 0"/><path d="M4 15l4 -6l4 2l4 -5l4 4"/>',
+            'wind': '<path d="M5 8h8.5a2.5 2.5 0 1 0 -2.34 -3.24"/><path d="M3 12h15.5a2.5 2.5 0 1 1 -2.34 3.24"/><path d="M4 16h5.5a2.5 2.5 0 1 1 -2.34 3.24"/>',
+            'history': '<path d="M12 8l0 4l2 2"/><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"/>',
+            'bolt': '<path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11"/>',
+            'activity': '<path d="M3 12h4l3 8l4 -16l3 8h4"/>',
+            'server': '<path d="M3 4m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z"/><path d="M3 12m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z"/><path d="M7 8l0 .01"/><path d="M7 16l0 .01"/>',
+            'users': '<path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0 -3 -3.85"/>',
+            'list-details': '<path d="M13 5h8"/><path d="M13 9h5"/><path d="M13 15h8"/><path d="M13 19h5"/><path d="M3 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M3 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/>'
+        };
+
+        function iconoSvg(nombre) {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS[nombre] || ''}</svg>`;
+        }
+
+        // Secciones del menú. Para sumar un acceso nuevo alcanza con agregar
+        // una línea acá: "permiso" es el permiso del usuario que lo habilita
+        // (el administrador ve todo) y las secciones con "admin" son solo
+        // para administradores. Con "url" abre esa pantalla; con "accion"
+        // llama a esa función de esta misma página. "icono" es una clave de ICONOS.
+        const MENU = [
+            { seccion: 'Producción', color: '#3b9bff', items: [
+                { icono: 'adjustments-horizontal', titulo: 'Control de Devanadoras', permiso: 'devanadoras', accion: 'abrirDevanadoras' },
+                { icono: 'clock-hour-4', titulo: 'Horómetros', permiso: 'horometros', url: '/horometros' }
+            ] },
+            { seccion: 'Ensayos', color: '#a78bfa', items: [
+                { icono: 'file-description', titulo: 'Visor de Ensayos', permiso: 'visor', url: '/visor' },
+                { icono: 'chart-line', titulo: 'Visor de Ensayos PH', permiso: 'visor', url: '/visor-ph' }
+            ] },
+            { seccion: 'Compresores y energía', color: '#2dd4bf', items: [
+                { icono: 'wind', titulo: 'Compresores', permiso: 'compresores', url: '/compresores' },
+                { icono: 'history', titulo: 'Historial de Compresores', permiso: 'compresores', url: '/compresores/historial' },
+                { icono: 'bolt', titulo: 'Consumos de Energía', permiso: 'energia', url: '/energia' }
+            ] },
+            { seccion: 'Administración', admin: true, color: '#ffc107', items: [
+                { icono: 'activity', titulo: 'Monitor de Variables', url: '/monitor' },
+                { icono: 'server', titulo: 'Estado del Sistema', url: '/estado' },
+                { icono: 'users', titulo: 'Administración de Usuarios', url: '/admin' },
+                { icono: 'list-details', titulo: 'Registro de Cambios', url: '/log' }
+            ] }
+        ];
+
+        // Sin tildes y en minúsculas, para que "energia" encuentre "Energía"
+        const normalizar = texto => String(texto).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+        function puedeVer(seccion, item) {
+            return seccion.admin ? yo.esAdmin : (yo.esAdmin || !!yo.permisos[item.permiso]);
+        }
+
+        function elementoMenu(item, clase, color) {
+            const contenido = `<span class="icono">${iconoSvg(item.icono)}</span><span>${item.titulo}</span>`;
+            const estilo = `--color:${color}`;
+
+            return item.url
+                ? `<a class="${clase}" style="${estilo}" href="${item.url}">${contenido}</a>`
+                : `<button type="button" class="${clase}" style="${estilo}" onclick="${item.accion}()">${contenido}</button>`;
+        }
+
+        function renderMenu() {
+            const filtro = normalizar(document.getElementById('menu-buscar').value.trim());
+            let html = '';
+            let habilitados = 0;
+            let visibles = 0;
+
+            MENU.forEach(seccion => {
+                const permitidos = seccion.items.filter(item => puedeVer(seccion, item));
+                habilitados += permitidos.length;
+
+                const items = filtro
+                    ? permitidos.filter(item => normalizar(item.titulo).includes(filtro))
+                    : permitidos;
+
+                if (items.length === 0) return;
+                visibles += items.length;
+
+                html += `<div class="menu-seccion-titulo">${seccion.seccion}${seccion.admin ? ' · solo administradores' : ''}</div>`;
+
+                html += seccion.admin
+                    ? `<div class="menu-chips">${items.map(item => elementoMenu(item, 'chip-menu', seccion.color)).join('')}</div>`
+                    : `<div class="menu-tiles">${items.map(item => elementoMenu(item, 'tile-menu', seccion.color)).join('')}</div>`;
+            });
+
+            if (habilitados === 0) {
+                html = '<div class="menu-vacio">Todavía no tenés secciones asignadas. Pedile a un administrador que te dé permisos.</div>';
+            } else if (visibles === 0) {
+                html = '<div class="menu-vacio">No hay secciones que coincidan con la búsqueda.</div>';
+            }
+
+            document.getElementById('menu-secciones').innerHTML = html;
+        }
+
+        // Enter abre la primera sección que quedó a la vista; Escape borra la búsqueda.
+        function teclaBuscador(evento) {
+            if (evento.key === 'Escape') {
+                evento.target.value = '';
+                renderMenu();
+            } else if (evento.key === 'Enter') {
+                const primero = document.querySelector('#menu-secciones .tile-menu, #menu-secciones .chip-menu');
+                if (primero) primero.click();
+            }
+        }
+
         function mostrarMenu() {
-            document.getElementById('menu-titulo').innerText = `MENÚ PRINCIPAL — ${yo.usuario}`;
-            document.getElementById('btn-menu-devanadoras').style.display = (yo.esAdmin || yo.permisos.devanadoras) ? 'flex' : 'none';
-            document.getElementById('btn-menu-horometros').style.display = (yo.esAdmin || yo.permisos.horometros) ? 'flex' : 'none';
-            document.getElementById('btn-menu-visor').style.display = (yo.esAdmin || yo.permisos.visor) ? 'flex' : 'none';
-            document.getElementById('btn-menu-visor-ph').style.display = (yo.esAdmin || yo.permisos.visor) ? 'flex' : 'none';
-            document.getElementById('btn-menu-energia').style.display = (yo.esAdmin || yo.permisos.energia) ? 'flex' : 'none';
-            document.getElementById('btn-menu-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
-            document.getElementById('btn-menu-historial-compresores').style.display = (yo.esAdmin || yo.permisos.compresores) ? 'flex' : 'none';
-            document.getElementById('btn-menu-monitor').style.display = yo.esAdmin ? 'flex' : 'none';
-            document.getElementById('btn-menu-estado').style.display = yo.esAdmin ? 'flex' : 'none';
-            document.getElementById('btn-menu-admin').style.display = yo.esAdmin ? 'flex' : 'none';
-            document.getElementById('btn-menu-log').style.display = yo.esAdmin ? 'flex' : 'none';
+            document.getElementById('menu-usuario').innerText = `Usuario: ${yo.usuario}`;
+            document.getElementById('menu-buscar').value = '';
+            renderMenu();
 
             document.getElementById('panel-devanadoras').style.display = 'none';
-            document.getElementById('menu-screen').style.display = 'flex';
+            document.getElementById('menu-screen').style.display = 'block';
         }
 
         // Si ya había una sesión iniciada (por ejemplo, volviendo con el
