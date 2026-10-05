@@ -2740,6 +2740,12 @@ app.get('/compresores/historial', requierePermisoPagina('compresores'), (req, re
 
 require('./ph/rutas')(app, { requierePermiso, requierePermisoPagina });
 
+// ======================================================
+// MONITOR DE VARIABLES (código en ./monitor, solo administradores)
+// ======================================================
+
+require('./monitor/rutas')(app, { requiereAdmin, requiereAdminPagina, registrarLog });
+
 app.listen(PORT, '0.0.0.0', () => {
 
     console.log(
