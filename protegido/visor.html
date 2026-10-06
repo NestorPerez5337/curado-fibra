@@ -113,6 +113,61 @@ a{
     font-size:14px;
 }
 
+select{
+    padding:8px;
+    margin-right:10px;
+    background:#222;
+    color:white;
+    border:1px solid #444;
+}
+
+.chip{
+    display:inline-block;
+    padding:3px 10px;
+    border-radius:10px;
+    font-size:12px;
+    font-weight:bold;
+    white-space:nowrap;
+    cursor:help;
+}
+
+.chip.verde{ background:#1e5a2e; color:#9be3b0; }
+.chip.ambar{ background:#6b4a10; color:#ffd58a; }
+.chip.rojo{ background:#6b1f27; color:#ffb3ba; }
+.chip.gris{ background:#3a3a3a; color:#bbb; }
+
+.aviso{
+    margin-top:12px;
+    padding:10px 14px;
+    border-radius:6px;
+    font-size:14px;
+    border-left:4px solid #555;
+    background:#1b1b1b;
+}
+
+.aviso.azul{ border-left-color:#007bff; }
+.aviso.ambar{ border-left-color:#ffc107; }
+.aviso.rojo{ border-left-color:#dc3545; }
+.aviso.verde{ border-left-color:#28a745; color:#9be3b0; }
+
+.aviso button{
+    margin-left:10px;
+    background:#007bff;
+    color:white;
+    border:none;
+    border-radius:4px;
+    font-weight:bold;
+}
+
+.aviso button:disabled{
+    opacity:.6;
+    cursor:wait;
+}
+
+.aviso small{
+    color:#999;
+}
+
 </style>
 
 <script src="/ph-assets/chart.min.js"></script>
@@ -133,6 +188,13 @@ a{
 
     <input id="filtroFecha" type="date">
 
+    <select id="filtroEstado" onchange="buscar()">
+        <option value="">Todos los estados</option>
+        <option value="pendiente">Pendientes de subir a SQL</option>
+        <option value="en_sql">Ya subidos a SQL</option>
+        <option value="interrumpido">Interrumpidos</option>
+    </select>
+
     <button onclick="buscar()">
         Buscar
     </button>
@@ -140,6 +202,8 @@ a{
 </div>
 
 <div id="msg"></div>
+
+<div id="resumen-sync"></div>
 
 <div id="panel-grafico">
 
@@ -167,6 +231,7 @@ a{
     <th>OP</th>
     <th>Caño</th>
     <th>Muestras</th>
+    <th>Estado</th>
     <th>Acciones</th>
 </tr>
 </thead>
@@ -194,6 +259,8 @@ a{
 let ensayos = [];
 let ensayoAbierto = null;
 let grafico = null;
+let configuradoSql = null;
+let ultimoResumen = null;
 
 function esc(valor){
     return String(valor === null || valor === undefined ? '' : valor)
@@ -245,7 +312,9 @@ async function cargarEnsayos(){
             cano: a.cano,
             archivo: a.archivo,
             datosId: d ? d.id : null,
-            cantidad: d ? d.cantidad : null
+            cantidad: d ? d.cantidad : null,
+            estado: d ? d.estado : null,
+            sincronizado: d ? d.sincronizado : null
         };
     });
 
@@ -257,7 +326,9 @@ async function cargarEnsayos(){
             cano: d.cano,
             archivo: null,
             datosId: d.id,
-            cantidad: d.cantidad
+            cantidad: d.cantidad,
+            estado: d.estado,
+            sincronizado: d.sincronizado
         });
     });
 
@@ -265,7 +336,42 @@ async function cargarEnsayos(){
 
     ensayos = filas;
 
-    mostrar(ensayos);
+    // se vuelven a aplicar los filtros que haya puesto la persona
+    buscar();
+}
+
+// Estado de cada ensayo respecto del SQL Server:
+//   pdf          ensayo anterior al guardado de muestras (solo tiene el PDF)
+//   interrumpido el programa se reinició en pleno ensayo (quedaron las muestras tomadas)
+//   en_sql       ya está subido
+//   pendiente    guardado en el programa, todavía sin subir
+function claveEstado(e){
+
+    if (e.datosId === null) return 'pdf';
+    if (e.estado === 'interrumpido') return 'interrumpido';
+    if (e.sincronizado) return 'en_sql';
+
+    return 'pendiente';
+}
+
+function chipEstado(e){
+
+    switch (claveEstado(e)) {
+
+        case 'pdf':
+            return '<span class="chip gris" title="Ensayo anterior al guardado de muestras: solo tiene el PDF">Solo PDF</span>';
+
+        case 'interrumpido':
+            return '<span class="chip rojo" title="El programa se reinició durante este ensayo. Quedaron guardadas las muestras tomadas hasta ese momento. No se sube a SQL Server porque está incompleto.">Interrumpido</span>';
+
+        case 'en_sql':
+            return '<span class="chip verde" title="Ya está guardado en el SQL Server">En SQL Server</span>';
+
+        default:
+            return configuradoSql === false
+                ? '<span class="chip gris" title="El SQL Server no está configurado en este servidor: el ensayo queda solo en el programa">Solo local</span>'
+                : '<span class="chip ambar" title="Todavía no se subió al SQL Server. Se reintenta solo cada 5 minutos.">Pendiente de SQL</span>';
+    }
 }
 
 function mostrar(lista){
@@ -292,6 +398,7 @@ function mostrar(lista){
             <td>${esc(e.op)}</td>
             <td>${esc(e.cano)}</td>
             <td>${e.cantidad === null ? '-' : esc(e.cantidad)}</td>
+            <td>${chipEstado(e)}</td>
             <td class="acciones">${acciones.join('')}</td>
         </tr>
         `;
@@ -312,6 +419,10 @@ function buscar(){
 
     const fecha =
         document.getElementById('filtroFecha')
+        .value;
+
+    const estadoFiltro =
+        document.getElementById('filtroEstado')
         .value;
 
     const filtrado =
@@ -337,6 +448,12 @@ function buscar(){
                 ok =
                     ok &&
                     e.fecha.startsWith(fecha);
+            }
+
+            if(estadoFiltro){
+                ok =
+                    ok &&
+                    claveEstado(e) === estadoFiltro;
             }
 
             return ok;
@@ -478,7 +595,136 @@ async function descargarPdf(id, boton){
     }
 }
 
-cargarEnsayos();
+// ------------------------------------------------------
+// Resumen: ensayo en curso y estado de la subida a SQL Server
+// ------------------------------------------------------
+
+function textoEdad(ms){
+
+    const s = Math.max(0, Math.round(ms / 1000));
+
+    return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min`;
+}
+
+function mostrarResumen(r){
+
+    const avisos = [];
+
+    if (r.enCurso) {
+        avisos.push(
+            `<div class="aviso azul"><b>Ensayo en curso:</b> OP ${esc(r.enCurso.op)} · caño ${esc(r.enCurso.cano)} · ` +
+            `${esc(r.enCurso.cantidad)} muestras guardadas <small>(último dato hace ${textoEdad(r.ahora - r.enCurso.actualizado)})</small></div>`
+        );
+    }
+
+    if (!r.configurado && r.pendientes > 0) {
+        avisos.push(
+            `<div class="aviso">Los ensayos quedan solo en el servidor del programa: el SQL Server no está configurado en este servidor ` +
+            `(<b>${esc(r.pendientes)}</b> sin subir).</div>`
+        );
+    } else if (r.pendientes > 0) {
+        avisos.push(
+            `<div class="aviso ambar"><b>${esc(r.pendientes)}</b> ensayo(s) todavía no subieron al SQL Server` +
+            (r.masAntiguo ? ` <small>(el más viejo: ${esc(r.masAntiguo)})</small>` : '') +
+            `. Están guardados y se reintenta solo cada 5 minutos.` +
+            `<button id="btn-subir" onclick="subirPendientes(this)">Subir pendientes ahora</button>` +
+            (r.ultimoError ? `<br><small>Último error: ${esc(r.ultimoError)}</small>` : '') + `</div>`
+        );
+    } else if (r.configurado && r.total > 0) {
+        avisos.push(`<div class="aviso verde">Todos los ensayos con muestras ya están subidos al SQL Server.</div>`);
+    }
+
+    if (r.interrumpidos > 0) {
+        avisos.push(
+            `<div class="aviso rojo"><b>${esc(r.interrumpidos)}</b> ensayo(s) quedaron interrumpidos porque el programa se reinició en pleno ensayo ` +
+            `(figuran como "Interrumpido"): tienen las muestras tomadas hasta ese momento y no se suben al SQL Server.</div>`
+        );
+    }
+
+    document.getElementById('resumen-sync').innerHTML = avisos.join('');
+}
+
+async function cargarResumen(){
+
+    try {
+
+        const res = await fetch('/api/ensayos-datos/resumen');
+
+        if (!res.ok) return;
+
+        const r = await res.json();
+
+        configuradoSql = r.configurado;
+
+        const cambio = ultimoResumen !== null && (
+            r.total !== ultimoResumen.total ||
+            r.pendientes !== ultimoResumen.pendientes ||
+            r.interrumpidos !== ultimoResumen.interrumpidos ||
+            r.configurado !== ultimoResumen.configurado
+        );
+
+        const primera = ultimoResumen === null;
+
+        ultimoResumen = r;
+
+        mostrarResumen(r);
+
+        // si apareció un ensayo nuevo o cambió su estado, se actualiza la lista
+        if (cambio) {
+            await cargarEnsayos();
+        } else if (primera) {
+            buscar();   // ya hay lista: solo se redibuja con lo que se supo del SQL (etiquetas)
+        }
+
+    } catch (err) {
+        // sin conexión momentánea: se reintenta en el próximo ciclo
+    }
+}
+
+async function subirPendientes(boton){
+
+    mostrarMensaje('');
+
+    boton.disabled = true;
+    boton.innerText = 'Subiendo...';
+
+    let mensaje = '';
+
+    try {
+
+        const res = await fetch('/api/ensayos-datos/sincronizar', { method: 'POST' });
+
+        if (!res.ok) {
+
+            mensaje = 'No se pudo subir los ensayos pendientes.';
+
+        } else {
+
+            const r = await res.json();
+
+            if (r.error && r.subidos === 0) {
+                mensaje = 'No se pudieron subir: ' + r.error;
+            }
+        }
+
+    } catch (err) {
+
+        mensaje = 'No se pudo subir los ensayos pendientes.';
+    }
+
+    // Se actualiza la lista y el resumen, y recién después se muestra el mensaje
+    // (si no, al recargar la lista se borraría)
+    await cargarResumen();
+    await cargarEnsayos();
+
+    if (mensaje) {
+        mostrarMensaje(mensaje);
+    }
+}
+
+cargarEnsayos().then(cargarResumen);
+
+setInterval(() => { if (!document.hidden) cargarResumen(); }, 8000);
 
 </script>
 

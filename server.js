@@ -2293,10 +2293,12 @@ async function crearClienteEnsayo() {
 // ======================================================
 // GUARDADO DEL ENSAYO TERMINADO
 // ======================================================
-// Al terminar el ensayo se guardan SOLO las muestras (base local y, desde
-// ahí, SQL Server). El PDF no se genera solo: lo arma el usuario desde el
-// Visor de Ensayos, con el botón "Generar PDF", cuando lo necesita. Así no se
-// llena el disco de PDFs y los ensayos de prueba no dejan archivos de más.
+// Las muestras se guardan en la base local a medida que se toman (ensayo "en
+// curso", ver ensayos-datos.js) y, al terminar, el ensayo queda guardado
+// completo y se sube a SQL Server. El PDF no se genera solo: lo arma el
+// usuario desde el Visor de Ensayos, con el botón "Generar PDF", cuando lo
+// necesita. Así no se llena el disco de PDFs y los ensayos de prueba no dejan
+// archivos de más.
 
 const INTENTOS_GUARDAR_ENSAYO = 3;
 const ESPERA_ENTRE_INTENTOS_MS = 1000;
@@ -2306,6 +2308,8 @@ async function guardarEnsayoTerminado() {
     if (datosEnsayo.length <= 0) {
 
         console.log('Ensayo sin muestras: no se guarda nada');
+
+        await ensayosDatos.cerrarEnCurso().catch(() => {});
 
         return;
     }
@@ -2331,6 +2335,11 @@ async function guardarEnsayoTerminado() {
             console.log(
                 `Ensayo guardado (id ${ensayoId}): OP ${ensayo.op}, Caño ${ensayo.cano}, ${ensayo.muestras.length} muestras.`
             );
+
+            // Ya está guardado completo: se borra el avance. Si esto fallara, no pasa
+            // nada grave: al próximo arranque se ve que ya estaba guardado y se descarta.
+            await ensayosDatos.cerrarEnCurso()
+                .catch(err => console.error('No se pudo borrar el avance del ensayo en curso:', err.message));
 
             // Sube el ensayo a SQL Server sin esperarlo (no frena el monitor del PLC).
             ensayosDatos.sincronizar();
@@ -2428,6 +2437,12 @@ setInterval(async () => {
             console.log(
                 `OP ${opActual} | Caño ${canoActual}`
             );
+
+            // Desde acá las muestras se guardan a medida que se toman: si el
+            // programa se reinicia en pleno ensayo, no se pierde. Si no se
+            // pudiera preparar el guardado, el ensayo sigue igual (solo en memoria).
+            await ensayosDatos.iniciarEnCurso({ op: opActual, cano: canoActual })
+                .catch(err => console.error('No se pudo preparar el guardado progresivo del ensayo:', err.message));
         }
 
         // ==========================================
@@ -2470,6 +2485,9 @@ setInterval(async () => {
                 presionData.response.body.values[0];
 
             datosEnsayo.push(presion);
+
+            // No espera: si falla solo deja el aviso en el log
+            ensayosDatos.actualizarEnCurso(datosEnsayo);
 
             console.log(
                 `Muestra ${datosEnsayo.length}: ${presion}`
@@ -2604,7 +2622,7 @@ app.get('/api/ensayos', requierePermiso('visor'), (req, res) => {
 });
 
 // Ensayos con las muestras guardadas en la base (gráfico y PDF bajo demanda)
-ensayosDatos.montarRutas(app, { requierePermiso });
+ensayosDatos.montarRutas(app, { requierePermiso, registrarLog });
 // ======================================================
 // SERVER
 // ======================================================

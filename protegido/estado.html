@@ -532,6 +532,9 @@ function renderEnsayos(e) {
         dato('Ensayos guardados en la base local', n.total) +
         dato('Pendientes de subir', n.pendientes, pendientesClase) +
         dato('El más viejo pendiente', n.masAntiguo ? esc(n.masAntiguo) : '—', pendientesClase) +
+        dato('Interrumpidos por un reinicio (no se suben)', n.interrumpidos || 0, n.interrumpidos ? 'regular' : '') +
+        dato('Ensayo en curso ahora',
+            n.enCurso ? `OP ${esc(n.enCurso.op)}, caño ${esc(n.enCurso.cano)}: ${n.enCurso.cantidad} muestras` : 'ninguno') +
         dato('Último intento de subida', fechaHora(n.ultimoIntento)) +
         dato('Última subida completa', fechaHora(n.ultimoOk)) +
         dato('Último error', n.ultimoError ? esc(n.ultimoError) : '—', n.ultimoError ? 'mal' : '') +
