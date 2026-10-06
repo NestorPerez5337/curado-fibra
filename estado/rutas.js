@@ -39,6 +39,9 @@ const GRACIA_BACKUP_INICIAL_MS = 5 * MIN; // el primero se hace a los 30 s de ar
 
 const HORAS_HISTORIAL_VALIDAS = [1, 6, 24];
 
+// Cuánto se guarda el historial de la conexión al SQL Server (ver server.js)
+const HORAS_RETENCION_SQL = 7 * 24;
+
 const ORDEN_NIVEL = { ok: 0, info: 0, aviso: 1, problema: 2 };
 
 const porcentaje = (parte, total) => Math.round(parte / total * 100);
@@ -215,7 +218,7 @@ function nivelGeneral(alertas) {
 // RUTAS
 // ======================================================
 
-module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor }) {
+module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql }) {
 
     const verificador = crearVerificador({ listarObjetivos });
 
@@ -295,6 +298,80 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         const horas = parseInt(req.query.horas, 10);
 
         res.json(sistema.historial(HORAS_HISTORIAL_VALIDAS.includes(horas) ? horas : 1));
+    });
+
+    // ---- Historial de la conexión al SQL Server, por capas (para el gráfico y para descargar)
+
+    const entero = (valor, minimo, maximo, defecto) => {
+
+        const n = parseInt(valor, 10);
+
+        return Number.isInteger(n) && n >= minimo && n <= maximo ? n : defecto;
+    };
+
+    app.get('/api/estado/sql-historial', requiereAdmin, async (req, res) => {
+
+        if (!listarLatidosSql) {
+            return res.json({ desde: Date.now(), hasta: Date.now(), filas: [] });
+        }
+
+        try {
+
+            const horas = entero(req.query.horas, 1, HORAS_RETENCION_SQL, 6);
+            const hasta = Date.now();
+            const desde = hasta - horas * HORA;
+
+            const filas = await listarLatidosSql({ desde, hasta, limite: 30000 });
+
+            res.json({ desde, hasta, filas });
+
+        } catch (err) {
+            console.error('Estado: error leyendo el historial de SQL:', err.message);
+            res.status(500).send('Error');
+        }
+    });
+
+    // El mismo historial como CSV (se abre en Excel o se le pasa a quien administra el servidor)
+    app.get('/api/estado/sql-historial.csv', requiereAdmin, async (req, res) => {
+
+        if (!listarLatidosSql) {
+            return res.status(404).send('Sin historial');
+        }
+
+        try {
+
+            const dias = entero(req.query.dias, 1, HORAS_RETENCION_SQL / 24, 3);
+            const hasta = Date.now();
+            const filas = await listarLatidosSql({ desde: hasta - dias * 24 * HORA, hasta, limite: 200000 });
+
+            const celda = valor => {
+
+                if (valor === null || valor === undefined) {
+                    return '';
+                }
+
+                const texto = String(valor);
+
+                return /[",\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+            };
+
+            const columnas = ['fecha_hora', 'epoch', 'servicio', 'tipo', 'fase', 'tcp_ms', 'consulta_ms', 'login_ms', 'error'];
+
+            const csv = [columnas.join(',')]
+                .concat(filas.map(f => columnas.map(c => celda(f[c])).join(',')))
+                .join('\r\n');
+
+            res.set({
+                'Content-Type': 'text/csv; charset=utf-8',
+                'Content-Disposition': `attachment; filename="sql_historial_${dias}d.csv"`
+            });
+
+            res.send('﻿' + csv);
+
+        } catch (err) {
+            console.error('Estado: error exportando el historial de SQL:', err.message);
+            res.status(500).send('Error');
+        }
     });
 
     return { evaluarAlertas };

@@ -135,5 +135,6 @@ module.exports = {
     // para el panel de Estado del Sistema: cuántos ms tardó el latido, o el error
     probar: gestor.probar,
     estadoConexion: gestor.estado,
+    alLatir: gestor.alLatir,
     descripcionCortes: gestor.descripcionCortes
 };

@@ -84,6 +84,25 @@ const lista = (async () => {
     await ejecutar(`CREATE INDEX IF NOT EXISTS idx_eventos_fecha ON eventos (fecha_hora)`);
     await ejecutar(`CREATE INDEX IF NOT EXISTS idx_eventos_variable ON eventos (variable_id, fecha_hora)`);
 
+    // Historial de la conexión al SQL Server, por capas (ver sql-pool.js): una
+    // fila por minuto como mínimo y todas las que salieron lentas o con error.
+    await ejecutar(`
+        CREATE TABLE IF NOT EXISTS sql_latidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            epoch INTEGER NOT NULL,
+            fecha_hora TEXT NOT NULL,
+            servicio TEXT NOT NULL,
+            tipo TEXT NOT NULL,
+            fase TEXT,
+            tcp_ms INTEGER,
+            consulta_ms INTEGER,
+            login_ms INTEGER,
+            error TEXT
+        )
+    `);
+
+    await ejecutar(`CREATE INDEX IF NOT EXISTS idx_sql_latidos_epoch ON sql_latidos (epoch)`);
+
 })();
 
 lista.catch(err => console.error('Monitor: error creando las tablas:', err));
@@ -258,6 +277,39 @@ async function totalEventos() {
     return fila ? fila.cantidad : 0;
 }
 
+// Una medición de la conexión al SQL Server (ver sql-pool.js). `servicio` es
+// 'PH' (lectura: Visor PH y Energía) o 'ensayos' (escritura de ensayos).
+async function registrarLatidoSql(servicio, m) {
+
+    await lista;
+
+    await ejecutar(
+        `INSERT INTO sql_latidos (epoch, fecha_hora, servicio, tipo, fase, tcp_ms, consulta_ms, login_ms, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [m.t, fechaLocal(new Date(m.t)), servicio, m.tipo, m.fase || null, m.tcpMs, m.consultaMs, m.loginMs, m.error]
+    );
+}
+
+async function listarLatidosSql({ desde, hasta, limite = 30000 }) {
+
+    await lista;
+
+    return todos(
+        `SELECT epoch, fecha_hora, servicio, tipo, fase, tcp_ms, consulta_ms, login_ms, error
+         FROM sql_latidos WHERE epoch >= ? AND epoch <= ? ORDER BY epoch ASC LIMIT ?`,
+        [desde, hasta, limite]
+    );
+}
+
+async function purgarLatidosSql(dias) {
+
+    await lista;
+
+    const resultado = await ejecutar(`DELETE FROM sql_latidos WHERE epoch < ?`, [Date.now() - dias * 24 * 60 * 60 * 1000]);
+
+    return resultado.changes;
+}
+
 async function purgarEventosViejos(dias) {
 
     await lista;
@@ -281,6 +333,9 @@ module.exports = {
     registrarEvento,
     listarEventos,
     respaldar,
+    registrarLatidoSql,
+    listarLatidosSql,
+    purgarLatidosSql,
     contarEventosDesde,
     totalEventos,
     purgarEventosViejos

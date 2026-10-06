@@ -150,6 +150,36 @@
     <p class="nota">Los PLCs de las devanadoras y los compresores se prueban abriendo una conexión TCP (sin leer ni escribir nada). El PLC del ensayo y el broker MQTT ya tienen una conexión propia del programa y se informa su estado real, para no competirle al PLC. Solo se verifica mientras esta pantalla está abierta; para ver el historial de cortes usá el <a class="enlace" href="/monitor">Monitor de Variables</a>.</p>
 </div>
 
+<div class="panel">
+    <div class="barra-superior">
+        <h2 style="margin:0;">Conexión al SQL Server: dónde se demora</h2>
+        <div>
+            <label for="rango-sql" style="color:#aaa; font-size:13px;">Período:</label>
+            <select id="rango-sql" onchange="cargarSql()">
+                <option value="1">Última hora</option>
+                <option value="6" selected>Últimas 6 horas</option>
+                <option value="24">Últimas 24 horas</option>
+                <option value="72">Últimos 3 días</option>
+                <option value="168">Últimos 7 días</option>
+            </select>
+            <a class="enlace" id="csv-sql" href="/api/estado/sql-historial.csv?dias=3" style="margin-left:12px; font-size:13px;">Descargar CSV (3 días)</a>
+        </div>
+    </div>
+    <p class="nota" style="margin-top:0;">Cada punto es una medición. <b style="color:#4ade80;">Verde</b>: lo que tarda la red hasta el servidor (conexión TCP, sin login). <b style="color:#4da3ff;">Azul</b>: lo que tarda una consulta mínima por la conexión ya abierta. <b style="color:#ffc107;">Ámbar</b>: lo que tarda abrir una conexión nueva y entrar. <b style="color:#ff6b6b;">Rojo</b>: sin respuesta. Si el verde está bajo y el azul o el ámbar suben, el SQL Server está ocupado o trabado; si el verde también sube, es la red o la máquina. Escala logarítmica (cada raya es 10 veces más). Se guarda una medición por minuto y todas las lentas, durante 7 días.</p>
+    <div id="resumen-sql" class="contenedor-tabla"></div>
+    <div class="graficos" style="margin-top:14px;">
+        <div>
+            <div class="grafico-titulo">Lectura: Visor PH y Consumos de Energía (ms)</div>
+            <div class="grafico-caja"><canvas id="g-sql-ph"></canvas></div>
+        </div>
+        <div>
+            <div class="grafico-titulo">Escritura: guardado de ensayos (ms)</div>
+            <div class="grafico-caja"><canvas id="g-sql-ensayos"></canvas></div>
+        </div>
+    </div>
+    <div id="msg-sql" class="nota"></div>
+</div>
+
 <div class="grilla">
     <div class="panel">
         <h2>Disco</h2>
@@ -772,6 +802,159 @@ function cambiarRango() {
 }
 
 // ------------------------------------------------------
+// CONEXIÓN AL SQL SERVER POR CAPAS
+// ------------------------------------------------------
+
+const TOPE_SIN_RESPUESTA_MS = 10000;
+
+function crearGraficoSql(idCanvas) {
+
+    const punto = (etiqueta, color, extra) => ({
+        label: etiqueta, data: [], borderColor: color, backgroundColor: color,
+        borderWidth: 1.5, pointRadius: 2, tension: 0, spanGaps: false, ...extra
+    });
+
+    return new Chart($(idCanvas), {
+        type: 'line',
+        data: {
+            datasets: [
+                punto('Red (TCP)', '#4ade80'),
+                punto('Consulta (conexión abierta)', '#4da3ff'),
+                punto('Conexión nueva (login)', '#ffc107'),
+                punto('Sin respuesta', '#ff6b6b', { showLine: false, pointStyle: 'crossRot', pointRadius: 6, borderWidth: 2 })
+            ]
+        },
+        options: {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: true },
+            plugins: { legend: { labels: { color: '#ccc' } } },
+            scales: {
+                x: {
+                    type: 'linear',
+                    ticks: {
+                        color: '#aaa', maxTicksLimit: 8,
+                        callback: v => {
+                            const f = new Date(v);
+                            const hora = f.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            return $('rango-sql').value >= 24 ? f.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + hora : hora;
+                        }
+                    },
+                    grid: { color: '#2a2a2a' }
+                },
+                y: {
+                    type: 'logarithmic', min: 1, max: 20000,
+                    ticks: { color: '#aaa', callback: v => [1, 10, 100, 1000, 10000].includes(v) ? v : '' },
+                    grid: { color: '#2a2a2a' }
+                }
+            }
+        }
+    });
+}
+
+function percentil(valores, p) {
+    if (!valores.length) return null;
+    const ordenados = valores.slice().sort((a, b) => a - b);
+    return ordenados[Math.min(ordenados.length - 1, Math.floor(ordenados.length * p))];
+}
+
+const graficosSql = {};
+
+function dibujarSql(clave, filas) {
+
+    const g = graficosSql[clave];
+
+    const serie = (valor) => filas
+        .map(f => ({ x: f.epoch, y: valor(f) }))
+        .filter(p => p.y !== null && p.y !== undefined)
+        .map(p => ({ x: p.x, y: Math.max(1, p.y) }));
+
+    g.data.datasets[0].data = serie(f => f.tcp_ms !== null && f.tcp_ms >= 0 ? f.tcp_ms : null);
+    g.data.datasets[1].data = serie(f => f.consulta_ms);
+    g.data.datasets[2].data = serie(f => f.login_ms);
+    g.data.datasets[3].data = serie(f => (f.error || f.tcp_ms === -1) ? TOPE_SIN_RESPUESTA_MS : null);
+    g.update('none');
+}
+
+function resumenSql(nombre, filas) {
+
+    const consultas = filas.map(f => f.consulta_ms).filter(v => v !== null);
+    const logins = filas.map(f => f.login_ms).filter(v => v !== null);
+    const redes = filas.map(f => f.tcp_ms).filter(v => v !== null && v >= 0);
+    const fallos = filas.filter(f => f.error || f.tcp_ms === -1).length;
+    const lentas = filas.filter(f => (f.consulta_ms || 0) > 1000 || (f.login_ms || 0) > 1000 || (f.tcp_ms || 0) > 1000).length;
+
+    const ms = v => v === null ? '—' : `${v} ms`;
+
+    return `<tr>
+        <td>${esc(nombre)}</td>
+        <td>${filas.length}</td>
+        <td>${ms(percentil(redes, 0.5))} / ${ms(percentil(redes, 0.95))} / ${ms(redes.length ? Math.max(...redes) : null)}</td>
+        <td>${ms(percentil(consultas, 0.5))} / ${ms(percentil(consultas, 0.95))} / ${ms(consultas.length ? Math.max(...consultas) : null)}</td>
+        <td>${ms(percentil(logins, 0.5))} / ${ms(percentil(logins, 0.95))} / ${ms(logins.length ? Math.max(...logins) : null)}</td>
+        <td class="${lentas ? 'mal' : ''}" style="${lentas ? 'color:#ffd58a;' : ''}">${lentas}</td>
+        <td style="${fallos ? 'color:#ff8a94;' : ''}">${fallos}</td>
+    </tr>`;
+}
+
+async function cargarSql() {
+
+    if (typeof Chart === 'undefined') return;
+
+    if (!graficosSql.PH) {
+        graficosSql.PH = crearGraficoSql('g-sql-ph');
+        graficosSql.ensayos = crearGraficoSql('g-sql-ensayos');
+    }
+
+    const horas = parseInt($('rango-sql').value, 10);
+
+    $('csv-sql').href = '/api/estado/sql-historial.csv?dias=' + Math.min(7, Math.max(1, Math.ceil(horas / 24)));
+    $('csv-sql').textContent = `Descargar CSV (${Math.min(7, Math.max(1, Math.ceil(horas / 24)))} ${Math.ceil(horas / 24) > 1 ? 'días' : 'día'})`;
+
+    try {
+
+        const res = await fetch('/api/estado/sql-historial?horas=' + horas);
+
+        if (!res.ok) throw new Error();
+
+        const { desde, hasta, filas } = await res.json();
+
+        const porServicio = { PH: filas.filter(f => f.servicio === 'PH'), ensayos: filas.filter(f => f.servicio === 'ensayos') };
+
+        for (const clave of ['PH', 'ensayos']) {
+            graficosSql[clave].options.scales.x.min = desde;
+            graficosSql[clave].options.scales.x.max = hasta;
+            dibujarSql(clave, porServicio[clave]);
+        }
+
+        $('resumen-sql').innerHTML = `
+            <table>
+                <thead><tr>
+                    <th>Cuenta</th><th>Mediciones</th>
+                    <th>Red TCP<br><small>mediana / p95 / máx</small></th>
+                    <th>Consulta (abierta)<br><small>mediana / p95 / máx</small></th>
+                    <th>Conexión nueva<br><small>mediana / p95 / máx</small></th>
+                    <th>Lentas (&gt; 1 s)</th><th>Sin respuesta</th>
+                </tr></thead>
+                <tbody>
+                    ${resumenSql('Lectura (Visor PH y Energía)', porServicio.PH)}
+                    ${resumenSql('Escritura (ensayos)', porServicio.ensayos)}
+                </tbody>
+            </table>`;
+
+        $('msg-sql').textContent = filas.length === 0
+            ? 'Todavía no hay mediciones en este período (se empiezan a guardar a los pocos segundos de arrancar el programa).'
+            : '';
+
+    } catch {
+
+        $('msg-sql').textContent = 'No se pudo cargar el historial de la conexión al SQL Server.';
+    }
+}
+
+// ------------------------------------------------------
 // ARRANQUE Y REFRESCO AUTOMÁTICO (se pausa si la pestaña no se ve)
 // ------------------------------------------------------
 
@@ -779,10 +962,12 @@ iniciarGraficos();
 
 cargarRapido().then(() => verificarConexiones(false));
 cargarHistorial();
+cargarSql();
 
 setInterval(() => { if (!document.hidden) cargarRapido(); }, 5000);
 setInterval(() => { if (!document.hidden) verificarConexiones(false); }, 15000);
 setInterval(() => { if (!document.hidden) cargarHistorial(); }, 30000);
+setInterval(() => { if (!document.hidden) cargarSql(); }, 60000);
 
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {

@@ -76,5 +76,6 @@ module.exports = {
     // para el panel de Estado del Sistema
     probar: gestor.probar,
     estadoConexion: gestor.estado,
+    alLatir: gestor.alLatir,
     descripcionCortes: gestor.descripcionCortes
 };
