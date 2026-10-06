@@ -27,7 +27,18 @@
 // el panel de Estado del Sistema.
 
 const dgram = require('dgram');
+const net = require('net');
 const sql = require('mssql');
+
+// Diagnóstico por capas: además del tiempo total de cada latido se mide por
+// separado (a) la red hasta el puerto del SQL Server (TCP, sin login), (b) la
+// consulta por la conexión ya abierta y (c) cada minuto una conexión NUEVA
+// completa (login + consulta). Si la red responde bien y la consulta tarda, el
+// SQL Server está ocupado; si tarda la red, es la red o la máquina. Cada medición
+// se informa a quien se suscriba con alLatir(), para guardar el historial.
+const TIMEOUT_TCP_MS = 5 * 1000;
+const TIMEOUT_LOGIN_FRIO_MS = 15 * 1000;
+const INTERVALO_LOGIN_FRIO_MS = 60 * 1000;
 
 const INTERVALO_LATIDO_MS = 15 * 1000;
 const INTERVALO_LATIDO_CAIDA_MS = 5 * 1000;     // con la base caída se prueba más seguido
@@ -62,6 +73,38 @@ function textoDuracion(ms) {
     const m = Math.floor(s / 60);
 
     return m < 60 ? `${m} min ${s % 60} s` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+// Cuánto tarda en abrirse una conexión TCP al puerto del SQL Server (solo la
+// red, sin login). Devuelve los ms, o null si no se pudo (rechazada o sin respuesta).
+function medirTcp(host, puerto) {
+
+    return new Promise(resolve => {
+
+        const inicio = Date.now();
+        const socket = new net.Socket();
+
+        let terminado = false;
+
+        const terminar = ms => {
+
+            if (terminado) {
+                return;
+            }
+
+            terminado = true;
+            socket.destroy();
+            resolve(ms);
+        };
+
+        socket.setTimeout(TIMEOUT_TCP_MS);
+
+        socket.once('connect', () => terminar(Date.now() - inicio));
+        socket.once('timeout', () => terminar(null));
+        socket.once('error', () => terminar(null));
+
+        socket.connect({ host, port: puerto });
+    });
 }
 
 // Pregunta al SQL Browser (UDP 1434) en qué puerto TCP escucha la instancia.
@@ -130,6 +173,10 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
     let puerto = { valor: null, momento: 0 };
     let latiendo = null;
     let iniciado = false;
+    let ultimoFrio = 0;
+    let resolviendoPuerto = null;
+
+    const oyentes = [];
 
     const estado = {
         fase: 'esperando',      // esperando | ok | lenta | caida
@@ -154,7 +201,14 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
         }
 
         if (!puerto.valor || Date.now() - puerto.momento > VIGENCIA_PUERTO_MS) {
-            puerto = { valor: await consultarPuertoInstancia(config.server, config.options.instanceName), momento: Date.now() };
+
+            // Si ya hay una consulta al SQL Browser en curso se espera esa misma
+            if (!resolviendoPuerto) {
+                resolviendoPuerto = consultarPuertoInstancia(config.server, config.options.instanceName)
+                    .finally(() => { resolviendoPuerto = null; });
+            }
+
+            puerto = { valor: await resolviendoPuerto, momento: Date.now() };
         }
 
         if (puerto.valor) {
@@ -300,6 +354,69 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
         descartarPool();
     }
 
+    // Cada medición (latido o conexión en frío) se informa a los suscriptos:
+    // { t, tipo: 'latido'|'frio', fase, tcpMs, consultaMs, loginMs, error }
+    function alLatir(oyente) {
+        oyentes.push(oyente);
+    }
+
+    function informar(medicion) {
+
+        for (const oyente of oyentes) {
+
+            try {
+                oyente({ ...medicion, fase: estado.fase });
+            } catch {
+                // un suscripto con problemas no puede afectar a la conexión
+            }
+        }
+    }
+
+    const textoError = err => `${err.code ? err.code + ': ' : ''}${err.message}`;
+
+    // Una conexión NUEVA completa (login + consulta) con una conexión descartable:
+    // dice cuánto tarda hoy conectarse desde cero. No espera ni frena al latido.
+    async function medirLoginEnFrio() {
+
+        const medicion = { t: Date.now(), tipo: 'frio', tcpMs: null, consultaMs: null, loginMs: null, error: null };
+        const inicio = Date.now();
+
+        let pool = null;
+
+        try {
+
+            const config = await configuracionResuelta();
+
+            pool = new sql.ConnectionPool({ ...config, pool: { max: 1, min: 0, idleTimeoutMillis: 1000 } });
+
+            await conLimite(async () => {
+
+                await pool.connect();
+
+                medicion.loginMs = Date.now() - inicio;
+
+                const t1 = Date.now();
+
+                await pool.request().query('SELECT 1 AS ok');
+
+                medicion.consultaMs = Date.now() - t1;
+
+            }, TIMEOUT_LOGIN_FRIO_MS, `No respondió en ${TIMEOUT_LOGIN_FRIO_MS / 1000} s`);
+
+        } catch (err) {
+
+            medicion.error = textoError(err);
+
+        } finally {
+
+            if (pool) {
+                try { await pool.close(); } catch { /* ya estaba cerrado */ }
+            }
+        }
+
+        informar(medicion);
+    }
+
     // Latido: una consulta mínima. Nunca lanza error.
     function latir() {
 
@@ -315,23 +432,66 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
 
             const inicio = Date.now();
 
+            const medicion = { t: inicio, tipo: 'latido', tcpMs: null, consultaMs: null, loginMs: null, error: null };
+
+            // La red (TCP) se mide al mismo tiempo que la consulta, para comparar el mismo instante.
+            // tcpMs: los ms que tardó; -1 si no pudo conectar; null si no se midió (puerto desconocido).
+            const medicionTcp = configuracionResuelta()
+                .then(async config => {
+
+                    if (!config.port) {
+                        return null;
+                    }
+
+                    const ms = await medirTcp(config.server, config.port);
+
+                    return ms === null ? -1 : ms;
+                })
+                .catch(() => null);
+
+            // Cada tanto se mide también una conexión nueva completa (sin esperarla)
+            if (estado.fase !== 'caida' && inicio - ultimoFrio >= INTERVALO_LOGIN_FRIO_MS) {
+                ultimoFrio = inicio;
+                medirLoginEnFrio();
+            }
+
             try {
 
+                const eraNueva = !poolPromise;
+
                 await conLimite(async () => {
+
+                    const antes = Date.now();
                     const pool = await abrirPool();
+                    const conectado = Date.now();
+
                     await pool.request().query('SELECT 1 AS ok');
+
+                    medicion.consultaMs = Date.now() - conectado;
+
+                    // Si el pool se acababa de armar, lo que tardó en conectar también es un login real
+                    if (eraNueva) {
+                        medicion.loginMs = conectado - antes;
+                    }
+
                 }, TIMEOUT_LATIDO_MS, `No respondió en ${TIMEOUT_LATIDO_MS / 1000} s`);
 
                 registrarExito(Date.now() - inicio);
 
             } catch (err) {
 
+                medicion.error = textoError(err);
+
                 registrarFallo(err);
 
             } finally {
 
+                medicion.tcpMs = await medicionTcp;
+
                 estado.ultimoLatido = Date.now();
                 latiendo = null;
+
+                informar(medicion);
             }
         })();
 
@@ -402,6 +562,7 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
         probar,
         latir,
         iniciar,
+        alLatir,
         descripcionCortes,
         estado: () => ({ ...estado, cortes: cortes.map(c => ({ ...c })) })
     };

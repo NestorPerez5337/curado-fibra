@@ -3010,12 +3010,47 @@ async function objetivosEstado() {
     return objetivos;
 }
 
+// Historial de la conexión al SQL Server por capas (ver sql-pool.js): se guarda
+// como mínimo una medición por minuto y todas las que salen lentas o con error,
+// durante 7 días. Sirve para ver, con día y hora, dónde se demora (red o servidor).
+const HISTORIAL_SQL_DIAS = 7;
+const MEDICION_SQL_LENTA_MS = 500;
+const ultimoGuardadoSql = {};
+
+function guardarMedicionSql(servicio, m) {
+
+    const lenta = (m.consultaMs || 0) > MEDICION_SQL_LENTA_MS ||
+        (m.tcpMs || 0) > MEDICION_SQL_LENTA_MS ||
+        (m.loginMs || 0) > MEDICION_SQL_LENTA_MS;
+
+    const anormal = !!m.error || m.tcpMs === -1 || lenta || m.fase === 'caida' || m.fase === 'lenta';
+    const pasoUnMinuto = m.t - (ultimoGuardadoSql[servicio] || 0) >= 60 * 1000;
+
+    if (m.tipo === 'frio' || anormal || pasoUnMinuto) {
+
+        ultimoGuardadoSql[servicio] = m.t;
+
+        monitorAlmacen.registrarLatidoSql(servicio, m)
+            .catch(err => console.error('No se pudo guardar la medición de SQL:', err.message));
+    }
+}
+
+phSql.alLatir(m => guardarMedicionSql('PH', m));
+ensayosSql.alLatir(m => guardarMedicionSql('ensayos', m));
+
+const purgarHistorialSql = () => monitorAlmacen.purgarLatidosSql(HISTORIAL_SQL_DIAS)
+    .catch(err => console.error('Error purgando el historial de SQL:', err.message));
+
+setTimeout(purgarHistorialSql, 60 * 1000).unref();
+setInterval(purgarHistorialSql, 24 * 60 * 60 * 1000).unref();
+
 require('./estado/rutas')(app, {
     requiereAdmin,
     requiereAdminPagina,
     listarObjetivos: objetivosEstado,
     resumenEnsayos: () => ensayosDatos.resumenSincronizacion(),
-    resumenMonitor: () => monitorVariables.resumen()
+    resumenMonitor: () => monitorVariables.resumen(),
+    listarLatidosSql: monitorAlmacen.listarLatidosSql
 });
 
 app.listen(PORT, '0.0.0.0', () => {
