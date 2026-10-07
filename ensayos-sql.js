@@ -111,7 +111,7 @@ async function guardarEnsayo({ op, cano, fecha, muestras }) {
             detalle.rows.add(idMaestro, presion, new Date(fecha.getTime() - segundosAntesDelFin * 1000));
         });
 
-        await new sql.Request(transaccion).bulk(detalle);
+        await new sql.Request(transaccion).bulk(detalle, { checkConstraints: true });
 
         await transaccion.commit();
 
