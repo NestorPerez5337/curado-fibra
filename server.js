@@ -3032,8 +3032,8 @@ const { crearRegistroArranques, mensajeDeReinicio } = require('./estado/arranque
 
 // Historial de la conexión al SQL Server por capas (ver sql-pool.js): se guarda
 // como mínimo una medición por minuto y todas las que salen lentas o con error,
-// durante 7 días. Sirve para ver, con día y hora, dónde se demora (red o servidor).
-const HISTORIAL_SQL_DIAS = 7;
+// durante 30 días (unos 12 MB). Sirve para ver, con día y hora, dónde se demora (red o servidor).
+const HISTORIAL_SQL_DIAS = 30;
 const MEDICION_SQL_LENTA_MS = 500;
 const ultimoGuardadoSql = {};
 
@@ -3086,6 +3086,8 @@ require('./estado/rutas')(app, {
     resumenEnsayos: () => ensayosDatos.resumenSincronizacion(),
     resumenMonitor: () => monitorVariables.resumen(),
     listarLatidosSql: monitorAlmacen.listarLatidosSql,
+    listarLatidosAnormalesSql: monitorAlmacen.listarLatidosAnormalesSql,
+    contarLatidosSql: monitorAlmacen.contarLatidosSql,
     listarArranquesSql: monitorAlmacen.listarArranquesSql,
     destinoSql: destinoSqlServer
 });

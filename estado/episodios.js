@@ -33,6 +33,9 @@ const SIGUE_EN_CURSO_MS = 45 * 1000;
 const REINICIO_ANTES_DEL_EPISODIO_MS = 30 * 1000;
 const REINICIO_DESPUES_DEL_EPISODIO_MS = 120 * 1000;
 
+// Las fallas (causas) que puede tener un episodio, para poder filtrar por ellas
+const CAUSAS = ['reinicio', 'sql', 'puerto', 'red', 'credenciales', 'pausa', 'otra'];
+
 const NOMBRE_SERVICIO = {
     PH: 'Visor PH y Energía (lectura)',
     ensayos: 'Guardado de ensayos (escritura)'
@@ -332,6 +335,15 @@ function resumirEpisodios(episodios) {
     const duraciones = episodios.map(e => e.duracionMs);
     const tiempoTotalMs = duraciones.reduce((suma, ms) => suma + ms, 0);
 
+    // cuántos episodios afectaron a cada servicio (uno que afectó a los dos cuenta en los dos)
+    const porServicio = { PH: 0, ensayos: 0 };
+
+    for (const ep of episodios) {
+        for (const servicio of ep.servicios) {
+            porServicio[servicio] = (porServicio[servicio] || 0) + 1;
+        }
+    }
+
     return {
         total: episodios.length,
         cortes: episodios.filter(e => e.gravedad === 'corte').length,
@@ -341,13 +353,29 @@ function resumirEpisodios(episodios) {
         masLargoMs: duraciones.length ? Math.max(...duraciones) : 0,
         masLargoTexto: duraciones.length ? textoDuracion(Math.max(...duraciones)) : null,
         causaMasFrecuente: causaMasFrecuente ? { causa: causaMasFrecuente[0], veces: causaMasFrecuente[1] } : null,
-        porCausa
+        porCausa,
+        porServicio
     };
+}
+
+// Se queda con los episodios que cumplen TODOS los filtros dados:
+//   tipo      'corte' | 'demora'
+//   causa     una de CAUSAS (la falla)
+//   servicio  'PH' | 'ensayos' (el servicio que afectó)
+// Un filtro vacío o con un valor que no existe no filtra nada.
+function filtrarEpisodios(episodios, { tipo, causa, servicio } = {}) {
+
+    return episodios.filter(e =>
+        (tipo !== 'corte' && tipo !== 'demora' || e.gravedad === tipo) &&
+        (!CAUSAS.includes(causa) || e.causa === causa) &&
+        (servicio !== 'PH' && servicio !== 'ensayos' || e.servicios.includes(servicio)));
 }
 
 module.exports = {
     detectarEpisodios,
     resumirEpisodios,
+    filtrarEpisodios,
+    CAUSAS,
     evaluarFila,
     textoDuracion,
     UMBRAL_LENTO_MS,

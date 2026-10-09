@@ -320,6 +320,36 @@ async function listarLatidosSql({ desde, hasta, limite = 30000 }) {
     );
 }
 
+// Solo las mediciones malas del período (con error, sin conexión de red, o más lentas que umbralMs):
+// son las únicas que cuentan para los episodios (las sanas no cambian el resultado) y son poquísimas
+// al lado del historial completo. Así los períodos largos no obligan a leer cientos de miles de filas.
+// Si fueran más que `limite` se conservan las más nuevas. Salen del más viejo al más nuevo.
+async function listarLatidosAnormalesSql({ desde, hasta, umbralMs = 1000, limite = 100000 }) {
+
+    await lista;
+
+    const filas = await todos(
+        `SELECT epoch, fecha_hora, servicio, tipo, fase, tcp_ms, consulta_ms, login_ms, error
+         FROM sql_latidos
+         WHERE epoch >= ? AND epoch <= ?
+           AND (error IS NOT NULL OR tcp_ms = -1 OR tcp_ms > ? OR consulta_ms > ? OR login_ms > ?)
+         ORDER BY epoch DESC LIMIT ?`,
+        [desde, hasta, umbralMs, umbralMs, umbralMs, limite]
+    );
+
+    return filas.reverse();
+}
+
+// Cuántas mediciones hay en el período (sanas y malas)
+async function contarLatidosSql({ desde, hasta }) {
+
+    await lista;
+
+    const fila = await uno(`SELECT COUNT(*) AS cantidad FROM sql_latidos WHERE epoch >= ? AND epoch <= ?`, [desde, hasta]);
+
+    return fila ? fila.cantidad : 0;
+}
+
 async function purgarLatidosSql(dias) {
 
     await lista;
@@ -385,6 +415,8 @@ module.exports = {
     respaldar,
     registrarLatidoSql,
     listarLatidosSql,
+    listarLatidosAnormalesSql,
+    contarLatidosSql,
     purgarLatidosSql,
     ultimoArranqueSql,
     registrarArranqueSql,
