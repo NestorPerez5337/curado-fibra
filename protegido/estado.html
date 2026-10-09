@@ -182,7 +182,8 @@
 
 <div class="panel">
     <h2>Cortes y demoras del SQL Server</h2>
-    <p class="nota" style="margin-top:0;">Cada fila es un episodio: mediciones malas seguidas (separadas por menos de 90 segundos) se cuentan como uno solo. <b>Corte</b>: alguna medición no tuvo respuesta. <b>Demora</b>: respondió, pero tardó más de 1 segundo. La duración va desde la primera hasta la última medición mala; el corte real puede ser algo más largo, porque se mide cada 5 a 15 segundos. Usa el mismo período que el gráfico de arriba.</p>
+    <p class="nota" style="margin-top:0;">Cada fila es un episodio: mediciones malas seguidas (separadas por menos de 90 segundos) se cuentan como uno solo. <b>Corte</b>: alguna medición no tuvo respuesta. <b>Demora</b>: respondió, pero tardó más de 1 segundo. La duración va desde la primera hasta la última medición mala; el corte real puede ser algo más largo, porque se mide cada 5 a 15 segundos. Los reinicios del servicio SQL Server se confirman leyendo cuándo arrancó (cada minuto). Usa el mismo período que el gráfico de arriba.</p>
+    <div id="arranques-sql"></div>
     <div id="resumen-episodios"></div>
     <div id="caja-episodios" class="contenedor-tabla" style="display:none;">
         <table>
@@ -942,6 +943,7 @@ function resumenSql(nombre, filas) {
 }
 
 const TEXTO_CAUSA = {
+    reinicio: 'el servicio SQL Server se reinició',
     sql: 'SQL Server tardó o no contestó',
     puerto: 'no se pudo abrir la conexión con el servidor',
     red: 'la red hasta el servidor se demoró',
@@ -966,17 +968,34 @@ function resumenEpisodios(r) {
     </div>`;
 }
 
+function bloqueArranques(ultimoArranque, reinicios) {
+
+    if (!ultimoArranque) return '';
+
+    const lineas = [
+        `<div class="dato"><span>Servicio SQL Server encendido desde</span><span>${fechaHora(ultimoArranque.arranque)} <small>(hace ${esc(duracion((Date.now() - ultimoArranque.arranque) / 1000))})</small></span></div>`
+    ];
+
+    for (const r of reinicios) {
+        const llevaba = r.previo ? ` <small>(llevaba ${esc(duracion((r.arranque - r.previo) / 1000))} encendido)</small>` : '';
+        lineas.push(`<div class="dato"><span>Se reinició el servicio</span><span>${fechaHora(r.arranque)}${llevaba}</span></div>`);
+    }
+
+    return `<div style="margin-bottom:12px;">${lineas.join('')}</div>`;
+}
+
 function filaEpisodio(e) {
 
     const tipo = e.gravedad === 'corte' ? '<span class="chip problema">Corte</span>' : '<span class="chip aviso">Demora</span>';
     const sigue = e.sigue ? ' <span class="chip info">sigue en curso</span>' : '';
+    const arranque = e.reinicio ? `<div class="nota">El servicio arrancó el ${fechaHora(e.reinicio.arranque)}.</div>` : '';
     const error = e.errorEjemplo ? `<div class="nota">Error: <span class="error-texto">${esc(e.errorEjemplo)}</span></div>` : '';
 
     return `<tr>
         <td style="white-space:nowrap;">${fechaHora(e.inicio)}</td>
         <td style="white-space:nowrap;">${esc(e.duracionTexto)}</td>
         <td>${tipo}${sigue}</td>
-        <td><b>${esc(e.titulo)}</b>${e.soloConexionesNuevas ? '<div class="nota">Solo afectó a las conexiones nuevas.</div>' : ''}<details><summary style="cursor:pointer; color:#00bfff; font-size:12px;">Qué significa</summary><div class="nota">${esc(e.explicacion)}</div>${error}</details></td>
+        <td><b>${esc(e.titulo)}</b>${arranque}${e.soloConexionesNuevas ? '<div class="nota">Solo afectó a las conexiones nuevas.</div>' : ''}<details><summary style="cursor:pointer; color:#00bfff; font-size:12px;">Qué significa</summary><div class="nota">${esc(e.explicacion)}</div>${error}</details></td>
         <td>${e.serviciosTexto.map(esc).join('<br>')}<div class="nota">${esc(e.impacto)}</div></td>
         <td>${esc(e.peorTexto || '—')}<div class="nota">${e.mediciones} medición(es) mala(s)</div></td>
     </tr>`;
@@ -990,8 +1009,9 @@ async function cargarEpisodios(horas) {
 
         if (!res.ok) throw new Error();
 
-        const { mediciones, resumen, episodios } = await res.json();
+        const { mediciones, resumen, episodios, ultimoArranque = null, reinicios = [] } = await res.json();
 
+        $('arranques-sql').innerHTML = bloqueArranques(ultimoArranque, reinicios);
         $('resumen-episodios').innerHTML = mediciones === 0 ? '' : resumenEpisodios(resumen);
         $('tabla-episodios').innerHTML = episodios.map(filaEpisodio).join('');
         $('caja-episodios').style.display = episodios.length ? '' : 'none';
@@ -1003,6 +1023,7 @@ async function cargarEpisodios(horas) {
     } catch {
 
         // no dejar a la vista un resultado anterior ("Sin cortes...") que ya no se puede confirmar
+        $('arranques-sql').innerHTML = '';
         $('resumen-episodios').innerHTML = '';
         $('caja-episodios').style.display = 'none';
         $('msg-episodios').textContent = 'No se pudieron cargar los cortes y demoras del SQL Server.';

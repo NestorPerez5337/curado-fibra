@@ -3028,6 +3028,8 @@ async function objetivosEstado() {
     return objetivos;
 }
 
+const { crearRegistroArranques, mensajeDeReinicio } = require('./estado/arranques');
+
 // Historial de la conexión al SQL Server por capas (ver sql-pool.js): se guarda
 // como mínimo una medición por minuto y todas las que salen lentas o con error,
 // durante 7 días. Sirve para ver, con día y hora, dónde se demora (red o servidor).
@@ -3056,6 +3058,21 @@ function guardarMedicionSql(servicio, m) {
 phSql.alLatir(m => guardarMedicionSql('PH', m));
 ensayosSql.alLatir(m => guardarMedicionSql('ensayos', m));
 
+// Reinicios del servicio de SQL Server: cada cuenta lee cuándo arrancó el servicio
+// (ver sql-pool.js); si arrancó después de lo último que teníamos guardado, hubo un
+// reinicio: se guarda (sirve para el panel de Estado) y queda en "Últimos errores".
+const registroArranquesSql = crearRegistroArranques({
+    ultimoGuardado: monitorAlmacen.ultimoArranqueSql,
+    guardar: monitorAlmacen.registrarArranqueSql,
+    alReiniciar: reinicio => console.warn(mensajeDeReinicio(reinicio))
+});
+
+const guardarArranqueSql = servicio => lectura => registroArranquesSql.registrar(servicio, lectura)
+    .catch(err => console.error('No se pudo guardar el arranque del SQL Server:', err.message));
+
+phSql.alArranque(guardarArranqueSql('PH'));
+ensayosSql.alArranque(guardarArranqueSql('ensayos'));
+
 const purgarHistorialSql = () => monitorAlmacen.purgarLatidosSql(HISTORIAL_SQL_DIAS)
     .catch(err => console.error('Error purgando el historial de SQL:', err.message));
 
@@ -3068,7 +3085,8 @@ require('./estado/rutas')(app, {
     listarObjetivos: objetivosEstado,
     resumenEnsayos: () => ensayosDatos.resumenSincronizacion(),
     resumenMonitor: () => monitorVariables.resumen(),
-    listarLatidosSql: monitorAlmacen.listarLatidosSql
+    listarLatidosSql: monitorAlmacen.listarLatidosSql,
+    listarArranquesSql: monitorAlmacen.listarArranquesSql
 });
 
 app.listen(PORT, '0.0.0.0', () => {

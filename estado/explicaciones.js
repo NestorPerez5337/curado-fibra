@@ -53,6 +53,16 @@ const REGLAS = [
     // ---------- SQL Server (los mensajes de sql-pool.js)
 
     {
+        id: 'sql-reinicio',
+        area: 'SQL Server',
+        patron: /^SQL Server: se reinició el servicio/,
+        explicar: () => ({
+            queSignifica: 'El servicio SQL Server arrancó de nuevo: el servidor volvió a crear su base temporal, algo que solo ocurre cuando el servicio se reinicia (por una actualización, un reinicio del servidor, un mantenimiento o una falla). Mientras arrancaba no aceptó conexiones, por eso pudieron aparecer errores de conexión justo antes de este aviso.',
+            queHacer: 'Si fue un reinicio planificado no hay nada que hacer: el programa se reconectó solo. Si nadie lo hizo a propósito, preguntar a quien administra el servidor qué lo causó (el registro de errores de SQL Server y el visor de eventos de Windows indican el motivo). En «Cortes y demoras del SQL Server» se ve el episodio que provocó.'
+        })
+    },
+
+    {
         id: 'sql-sin-respuesta',
         area: 'SQL Server',
         patron: /^SQL (\w+): sin respuesta \(([\s\S]*)\)\. Los pedidos fallan/,
