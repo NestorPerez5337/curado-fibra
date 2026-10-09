@@ -17,6 +17,7 @@ const path = require('path');
 const sistema = require('./sistema');
 const { crearVerificador } = require('./conexiones');
 const { detectarEpisodios, resumirEpisodios } = require('./episodios');
+const { explicarError } = require('./explicaciones');
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -265,7 +266,7 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
             conexiones,
             ensayos,
             monitor,
-            errores: sistema.ultimosErrores()
+            errores: sistema.ultimosErrores().map(e => ({ ...e, explicacion: explicarError(e.mensaje) }))
         };
     }
 
