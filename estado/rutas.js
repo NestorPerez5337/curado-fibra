@@ -18,6 +18,7 @@ const sistema = require('./sistema');
 const { crearVerificador } = require('./conexiones');
 const { detectarEpisodios, resumirEpisodios } = require('./episodios');
 const { explicarError } = require('./explicaciones');
+const { armarInforme } = require('./informe');
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -234,7 +235,7 @@ function nivelGeneral(alertas) {
 // RUTAS
 // ======================================================
 
-module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarArranquesSql }) {
+module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarArranquesSql, destinoSql }) {
 
     const verificador = crearVerificador({ listarObjetivos });
 
@@ -348,6 +349,33 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         }
     });
 
+    // Lo que necesitan la tabla de episodios y el informe: las mediciones del período, los
+    // episodios (del más viejo al más nuevo) y los arranques del servicio SQL Server.
+    async function leerEpisodiosSql(horas) {
+
+        const hasta = Date.now();
+        const desde = hasta - horas * HORA;
+
+        const filas = await listarLatidosSql({ desde, hasta, limite: 200000 });
+
+        // Los arranques del servicio SQL Server (son pocos: una fila por reinicio)
+        const arranques = (listarArranquesSql && await sinFallar(listarArranquesSql({ desde: 0 }))) || [];
+        const reinicios = arranques.filter(a => a.reinicio);
+
+        const episodios = detectarEpisodios(filas, { ahora: hasta, reinicios });
+
+        return {
+            desde,
+            hasta,
+            mediciones: filas.length,
+            // desde cuándo está encendido el servicio, y los reinicios que hubo en el período (el más viejo primero)
+            ultimoArranque: arranques.length ? arranques[arranques.length - 1] : null,
+            reinicios: reinicios.filter(r => r.arranque >= desde && r.arranque <= hasta),
+            episodios,
+            resumen: resumirEpisodios(episodios)
+        };
+    }
+
     // Los cortes y demoras del período, agrupados en episodios (ver episodios.js)
     app.get('/api/estado/sql-episodios', requiereAdmin, async (req, res) => {
 
@@ -359,31 +387,52 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
         try {
 
-            const horas = entero(req.query.horas, 1, HORAS_RETENCION_SQL, 24);
-            const desde = hasta - horas * HORA;
-
-            const filas = await listarLatidosSql({ desde, hasta, limite: 200000 });
-
-            // Los arranques del servicio SQL Server (son pocos: una fila por reinicio)
-            const arranques = (listarArranquesSql && await sinFallar(listarArranquesSql({ desde: 0 }))) || [];
-            const reinicios = arranques.filter(a => a.reinicio);
-
-            const episodios = detectarEpisodios(filas, { ahora: hasta, reinicios });
+            const datos = await leerEpisodiosSql(entero(req.query.horas, 1, HORAS_RETENCION_SQL, 24));
 
             res.json({
-                desde,
-                hasta,
-                mediciones: filas.length,
-                // desde cuándo está encendido el servicio, y los reinicios que hubo en el período (el más nuevo primero)
-                ultimoArranque: arranques.length ? arranques[arranques.length - 1] : null,
-                reinicios: reinicios.filter(r => r.arranque >= desde && r.arranque <= hasta).reverse(),
-                resumen: resumirEpisodios(episodios),
+                desde: datos.desde,
+                hasta: datos.hasta,
+                mediciones: datos.mediciones,
+                ultimoArranque: datos.ultimoArranque,
                 // el más reciente primero
-                episodios: episodios.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)
+                reinicios: datos.reinicios.slice().reverse(),
+                resumen: datos.resumen,
+                episodios: datos.episodios.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)
             });
 
         } catch (err) {
             console.error('Estado: error armando los episodios de SQL:', err.message);
+            res.status(500).send('Error');
+        }
+    });
+
+    // El informe para quien administra el servidor SQL (texto plano, listo para mandar; ver informe.js)
+    app.get('/api/estado/sql-informe', requiereAdmin, async (req, res) => {
+
+        if (!listarLatidosSql) {
+            return res.status(404).send('Sin historial');
+        }
+
+        try {
+
+            const datos = await leerEpisodiosSql(entero(req.query.horas, 1, HORAS_RETENCION_SQL, 24));
+
+            const texto = armarInforme({
+                desde: datos.desde,
+                hasta: datos.hasta,
+                ahora: datos.hasta,
+                mediciones: datos.mediciones,
+                episodios: datos.episodios,
+                resumen: datos.resumen,
+                reinicios: datos.reinicios,
+                ultimoArranque: datos.ultimoArranque,
+                servidor: destinoSql ? destinoSql() : null
+            });
+
+            res.set('Content-Type', 'text/plain; charset=utf-8').send(texto);
+
+        } catch (err) {
+            console.error('Estado: error armando el informe de SQL:', err.message);
             res.status(500).send('Error');
         }
     });

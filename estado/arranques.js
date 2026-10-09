@@ -94,21 +94,28 @@ function crearRegistroArranques({ ultimoGuardado, guardar, alReiniciar }) {
 function textoTiempoEncendido(ms) {
 
     if (ms < MIN) {
-        return `${Math.max(0, Math.round(ms / 1000))} s`;
+        return `${Math.max(0, Math.floor(ms / 1000))} s`;
     }
 
-    if (ms < HORA) {
-        return `${Math.round(ms / MIN)} min`;
+    // Se redondea una sola vez (a minutos, y a horas desde un día) y recién después se
+    // reparte en unidades: así nunca queda "2 h 60 min" ni "1 día 24 h".
+    const minutos = Math.round(ms / MIN);
+
+    if (minutos < 60) {
+        return `${minutos} min`;
     }
 
-    if (ms < DIA) {
-        const horas = Math.floor(ms / HORA);
-        const minutos = Math.round((ms % HORA) / MIN);
-        return minutos ? `${horas} h ${minutos} min` : `${horas} h`;
+    if (minutos < 24 * 60) {
+
+        const horas = Math.floor(minutos / 60);
+        const resto = minutos % 60;
+
+        return resto ? `${horas} h ${resto} min` : `${horas} h`;
     }
 
-    const dias = Math.floor(ms / DIA);
-    const horas = Math.round((ms % DIA) / HORA);
+    const horasTotales = Math.round(minutos / 60);
+    const dias = Math.floor(horasTotales / 24);
+    const horas = horasTotales % 24;
 
     return `${dias} ${dias === 1 ? 'día' : 'días'}${horas ? ` ${horas} h` : ''}`;
 }
