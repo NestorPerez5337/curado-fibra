@@ -223,7 +223,7 @@
 
 <div class="panel">
     <h2>Últimos errores del programa</h2>
-    <p class="nota" style="margin-top:0;">Lo que el programa escribió como error o advertencia desde que arrancó. Los mensajes iguales se agrupan y cuentan cuántas veces se repitieron.</p>
+    <p class="nota" style="margin-top:0;">Lo que el programa escribió como error o advertencia desde que arrancó. Los mensajes iguales se agrupan y cuentan cuántas veces se repitieron. Las columnas «Qué significa» y «Qué hacer» explican en palabras simples los mensajes conocidos; si un mensaje todavía no tiene explicación, se muestra solo el texto original.</p>
     <div class="contenedor-tabla">
         <table>
             <thead>
@@ -231,7 +231,9 @@
                     <th>Última vez</th>
                     <th>Nivel</th>
                     <th>Veces</th>
-                    <th>Mensaje</th>
+                    <th>Qué significa</th>
+                    <th>Qué hacer</th>
+                    <th>Mensaje original</th>
                 </tr>
             </thead>
             <tbody id="tabla-errores"></tbody>
@@ -615,17 +617,32 @@ function renderMonitor(e) {
 function renderErrores(e) {
 
     if (!e.errores.length) {
-        $('tabla-errores').innerHTML = '<tr><td colspan="4" class="vacio">El programa no registró errores desde que arrancó.</td></tr>';
+        $('tabla-errores').innerHTML = '<tr><td colspan="6" class="vacio">El programa no registró errores desde que arrancó.</td></tr>';
         return;
     }
 
-    $('tabla-errores').innerHTML = e.errores.map(x => `
+    $('tabla-errores').innerHTML = e.errores.map(x => {
+
+        const ex = x.explicacion;
+
+        const significa = ex
+            ? `<div class="nota" style="margin:0 0 3px;">${esc(ex.area)}</div>${esc(ex.queSignifica)}`
+            : '<span class="vacio">Sin explicación todavía.</span>';
+
+        const hacer = ex
+            ? esc(ex.queHacer)
+            : '<span class="vacio">Si se repite, copiar el mensaje original y pasarlo a soporte.</span>';
+
+        return `
         <tr>
             <td style="white-space:nowrap;">${fechaHora(x.ultima)}</td>
             <td><span class="chip ${x.nivel === 'error' ? 'error' : 'warn'}">${x.nivel === 'error' ? 'Error' : 'Aviso'}</span></td>
             <td>${x.veces}</td>
+            <td style="min-width:240px;">${significa}</td>
+            <td style="min-width:240px;">${hacer}</td>
             <td class="error-texto">${esc(x.mensaje)}</td>
-        </tr>`).join('');
+        </tr>`;
+    }).join('');
 }
 
 function render(e) {
