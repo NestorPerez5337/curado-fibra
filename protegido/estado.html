@@ -180,6 +180,28 @@
     <div id="msg-sql" class="nota"></div>
 </div>
 
+<div class="panel">
+    <h2>Cortes y demoras del SQL Server</h2>
+    <p class="nota" style="margin-top:0;">Cada fila es un episodio: mediciones malas seguidas (separadas por menos de 90 segundos) se cuentan como uno solo. <b>Corte</b>: alguna medición no tuvo respuesta. <b>Demora</b>: respondió, pero tardó más de 1 segundo. La duración va desde la primera hasta la última medición mala; el corte real puede ser algo más largo, porque se mide cada 5 a 15 segundos. Usa el mismo período que el gráfico de arriba.</p>
+    <div id="resumen-episodios"></div>
+    <div id="caja-episodios" class="contenedor-tabla" style="display:none;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Inicio</th>
+                    <th>Duración</th>
+                    <th>Tipo</th>
+                    <th>Qué pasó</th>
+                    <th>Afectó a</th>
+                    <th>Lo peor medido</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-episodios"></tbody>
+        </table>
+    </div>
+    <div id="msg-episodios" class="nota"></div>
+</div>
+
 <div class="grilla">
     <div class="panel">
         <h2>Disco</h2>
@@ -902,6 +924,74 @@ function resumenSql(nombre, filas) {
     </tr>`;
 }
 
+const TEXTO_CAUSA = {
+    sql: 'SQL Server tardó o no contestó',
+    puerto: 'no se pudo abrir la conexión con el servidor',
+    red: 'la red hasta el servidor se demoró',
+    credenciales: 'usuario o contraseña rechazados',
+    pausa: 'servicio en pausa',
+    otra: 'sin clasificar'
+};
+
+function resumenEpisodios(r) {
+
+    if (r.total === 0) {
+        return '<div class="alerta" style="border-left-color:#28a745;"><b>Sin cortes ni demoras en este período</b></div>';
+    }
+
+    const frecuente = r.causaMasFrecuente
+        ? ' · Causa más frecuente: ' + esc(TEXTO_CAUSA[r.causaMasFrecuente.causa] || r.causaMasFrecuente.causa) + ' (' + r.causaMasFrecuente.veces + ' de ' + r.total + ')'
+        : '';
+
+    return `<div class="alerta ${r.cortes ? 'problema' : 'aviso'}">
+        <b>${r.total} episodio(s): ${r.cortes} corte(s) y ${r.demoras} demora(s)</b>
+        <span>Tiempo total con problemas: ${esc(r.tiempoTotalTexto)} · El más largo: ${esc(r.masLargoTexto)}${frecuente}</span>
+    </div>`;
+}
+
+function filaEpisodio(e) {
+
+    const tipo = e.gravedad === 'corte' ? '<span class="chip problema">Corte</span>' : '<span class="chip aviso">Demora</span>';
+    const sigue = e.sigue ? ' <span class="chip info">sigue en curso</span>' : '';
+    const error = e.errorEjemplo ? `<div class="nota">Error: <span class="error-texto">${esc(e.errorEjemplo)}</span></div>` : '';
+
+    return `<tr>
+        <td style="white-space:nowrap;">${fechaHora(e.inicio)}</td>
+        <td style="white-space:nowrap;">${esc(e.duracionTexto)}</td>
+        <td>${tipo}${sigue}</td>
+        <td><b>${esc(e.titulo)}</b>${e.soloConexionesNuevas ? '<div class="nota">Solo afectó a las conexiones nuevas.</div>' : ''}<details><summary style="cursor:pointer; color:#00bfff; font-size:12px;">Qué significa</summary><div class="nota">${esc(e.explicacion)}</div>${error}</details></td>
+        <td>${e.serviciosTexto.map(esc).join('<br>')}<div class="nota">${esc(e.impacto)}</div></td>
+        <td>${esc(e.peorTexto || '—')}<div class="nota">${e.mediciones} medición(es) mala(s)</div></td>
+    </tr>`;
+}
+
+async function cargarEpisodios(horas) {
+
+    try {
+
+        const res = await fetch('/api/estado/sql-episodios?horas=' + horas);
+
+        if (!res.ok) throw new Error();
+
+        const { mediciones, resumen, episodios } = await res.json();
+
+        $('resumen-episodios').innerHTML = mediciones === 0 ? '' : resumenEpisodios(resumen);
+        $('tabla-episodios').innerHTML = episodios.map(filaEpisodio).join('');
+        $('caja-episodios').style.display = episodios.length ? '' : 'none';
+
+        $('msg-episodios').textContent = mediciones === 0
+            ? 'Todavía no hay mediciones en este período (se empiezan a guardar a los pocos segundos de arrancar el programa).'
+            : (resumen.total > episodios.length ? 'Se muestran los ' + episodios.length + ' más recientes de ' + resumen.total + '.' : '');
+
+    } catch {
+
+        // no dejar a la vista un resultado anterior ("Sin cortes...") que ya no se puede confirmar
+        $('resumen-episodios').innerHTML = '';
+        $('caja-episodios').style.display = 'none';
+        $('msg-episodios').textContent = 'No se pudieron cargar los cortes y demoras del SQL Server.';
+    }
+}
+
 async function cargarSql() {
 
     if (typeof Chart === 'undefined') return;
@@ -915,6 +1005,8 @@ async function cargarSql() {
 
     $('csv-sql').href = '/api/estado/sql-historial.csv?dias=' + Math.min(7, Math.max(1, Math.ceil(horas / 24)));
     $('csv-sql').textContent = `Descargar CSV (${Math.min(7, Math.max(1, Math.ceil(horas / 24)))} ${Math.ceil(horas / 24) > 1 ? 'días' : 'día'})`;
+
+    cargarEpisodios(horas);
 
     try {
 

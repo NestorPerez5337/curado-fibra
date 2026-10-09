@@ -16,6 +16,7 @@
 const path = require('path');
 const sistema = require('./sistema');
 const { crearVerificador } = require('./conexiones');
+const { detectarEpisodios, resumirEpisodios } = require('./episodios');
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -41,6 +42,9 @@ const HORAS_HISTORIAL_VALIDAS = [1, 6, 24];
 
 // Cuánto se guarda el historial de la conexión al SQL Server (ver server.js)
 const HORAS_RETENCION_SQL = 7 * 24;
+
+// Cuántos episodios se listan en la pantalla (los más recientes)
+const MAX_EPISODIOS_PANTALLA = 200;
 
 const ORDEN_NIVEL = { ok: 0, info: 0, aviso: 1, problema: 2 };
 
@@ -327,6 +331,38 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
         } catch (err) {
             console.error('Estado: error leyendo el historial de SQL:', err.message);
+            res.status(500).send('Error');
+        }
+    });
+
+    // Los cortes y demoras del período, agrupados en episodios (ver episodios.js)
+    app.get('/api/estado/sql-episodios', requiereAdmin, async (req, res) => {
+
+        const hasta = Date.now();
+
+        if (!listarLatidosSql) {
+            return res.json({ desde: hasta, hasta, mediciones: 0, resumen: resumirEpisodios([]), episodios: [] });
+        }
+
+        try {
+
+            const horas = entero(req.query.horas, 1, HORAS_RETENCION_SQL, 24);
+            const desde = hasta - horas * HORA;
+
+            const filas = await listarLatidosSql({ desde, hasta, limite: 200000 });
+            const episodios = detectarEpisodios(filas, { ahora: hasta });
+
+            res.json({
+                desde,
+                hasta,
+                mediciones: filas.length,
+                resumen: resumirEpisodios(episodios),
+                // el más reciente primero
+                episodios: episodios.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)
+            });
+
+        } catch (err) {
+            console.error('Estado: error armando los episodios de SQL:', err.message);
             res.status(500).send('Error');
         }
     });
