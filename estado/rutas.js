@@ -16,7 +16,7 @@
 const path = require('path');
 const sistema = require('./sistema');
 const { crearVerificador } = require('./conexiones');
-const { detectarEpisodios, resumirEpisodios } = require('./episodios');
+const { detectarEpisodios, resumirEpisodios, filtrarEpisodios, CAUSAS, UMBRAL_LENTO_MS } = require('./episodios');
 const { explicarError } = require('./explicaciones');
 const { armarInforme } = require('./informe');
 
@@ -44,7 +44,11 @@ const GRACIA_BACKUP_INICIAL_MS = 5 * MIN; // el primero se hace a los 30 s de ar
 const HORAS_HISTORIAL_VALIDAS = [1, 6, 24];
 
 // Cuánto se guarda el historial de la conexión al SQL Server (ver server.js)
-const HORAS_RETENCION_SQL = 7 * 24;
+const HORAS_RETENCION_SQL = 30 * 24;
+
+// El gráfico dibuja cada medición como un punto: hasta 7 días son unos 40.000 puntos; más que eso
+// no se ve ni se puede mover. Los períodos largos se miran con la tabla de episodios y el informe.
+const HORAS_MAX_GRAFICO_SQL = 7 * 24;
 
 // Cuántos episodios se listan en la pantalla (los más recientes)
 const MAX_EPISODIOS_PANTALLA = 200;
@@ -235,7 +239,7 @@ function nivelGeneral(alertas) {
 // RUTAS
 // ======================================================
 
-module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarArranquesSql, destinoSql }) {
+module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarLatidosAnormalesSql, contarLatidosSql, listarArranquesSql, destinoSql }) {
 
     const verificador = crearVerificador({ listarObjetivos });
 
@@ -335,11 +339,13 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
         try {
 
-            const horas = entero(req.query.horas, 1, HORAS_RETENCION_SQL, 6);
+            const horas = entero(req.query.horas, 1, HORAS_MAX_GRAFICO_SQL, 6);
             const hasta = Date.now();
             const desde = hasta - horas * HORA;
 
-            const filas = await listarLatidosSql({ desde, hasta, limite: 30000 });
+            // 7 días son unas 40.000 mediciones (2 cuentas x 2 tipos x 1 por minuto): con un tope de 30.000
+            // el gráfico dejaba afuera los últimos días.
+            const filas = await listarLatidosSql({ desde, hasta, limite: 100000 });
 
             res.json({ desde, hasta, filas });
 
@@ -356,7 +362,23 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         const hasta = Date.now();
         const desde = hasta - horas * HORA;
 
-        const filas = await listarLatidosSql({ desde, hasta, limite: 200000 });
+        // Para los episodios solo cuentan las mediciones malas (las sanas no cambian el resultado): se piden
+        // solo esas y el total se cuenta aparte, así 30 días no obligan a leer cientos de miles de filas.
+        let filas;
+        let mediciones;
+
+        if (listarLatidosAnormalesSql && contarLatidosSql) {
+
+            [filas, mediciones] = await Promise.all([
+                listarLatidosAnormalesSql({ desde, hasta, umbralMs: UMBRAL_LENTO_MS }),
+                contarLatidosSql({ desde, hasta })
+            ]);
+
+        } else {
+
+            filas = await listarLatidosSql({ desde, hasta, limite: 400000 });
+            mediciones = filas.length;
+        }
 
         // Los arranques del servicio SQL Server (son pocos: una fila por reinicio)
         const arranques = (listarArranquesSql && await sinFallar(listarArranquesSql({ desde: 0 }))) || [];
@@ -367,7 +389,7 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         return {
             desde,
             hasta,
-            mediciones: filas.length,
+            mediciones,
             // desde cuándo está encendido el servicio, y los reinicios que hubo en el período (el más viejo primero)
             ultimoArranque: arranques.length ? arranques[arranques.length - 1] : null,
             reinicios: reinicios.filter(r => r.arranque >= desde && r.arranque <= hasta),
@@ -389,6 +411,17 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
             const datos = await leerEpisodiosSql(entero(req.query.horas, 1, HORAS_RETENCION_SQL, 24));
 
+            // Filtros opcionales (el filtro se aplica acá, sobre TODOS los episodios del período, y no sobre los
+            // 200 que entran en pantalla: así un episodio viejo se encuentra aunque haya muchos más nuevos).
+            // Un valor que no existe se ignora. El resumen sigue siendo el del período completo.
+            const filtros = {
+                tipo: ['corte', 'demora'].includes(req.query.tipo) ? req.query.tipo : '',
+                causa: CAUSAS.includes(req.query.causa) ? req.query.causa : '',
+                servicio: ['PH', 'ensayos'].includes(req.query.servicio) ? req.query.servicio : ''
+            };
+
+            const filtrados = filtrarEpisodios(datos.episodios, filtros);
+
             res.json({
                 desde: datos.desde,
                 hasta: datos.hasta,
@@ -397,7 +430,9 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
                 // el más reciente primero
                 reinicios: datos.reinicios.slice().reverse(),
                 resumen: datos.resumen,
-                episodios: datos.episodios.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)
+                filtros,
+                filtrados: filtrados.length,
+                episodios: filtrados.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)
             });
 
         } catch (err) {
@@ -448,7 +483,8 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
             const dias = entero(req.query.dias, 1, HORAS_RETENCION_SQL / 24, 3);
             const hasta = Date.now();
-            const filas = await listarLatidosSql({ desde: hasta - dias * 24 * HORA, hasta, limite: 200000 });
+            // 30 días son unas 175.000 filas
+            const filas = await listarLatidosSql({ desde: hasta - dias * 24 * HORA, hasta, limite: 400000 });
 
             const celda = valor => {
 
