@@ -181,8 +181,32 @@
 </div>
 
 <div class="panel">
-    <h2>Cortes y demoras del SQL Server</h2>
+    <div class="barra-superior">
+        <h2 style="margin:0;">Cortes y demoras del SQL Server</h2>
+        <button id="btn-informe" onclick="abrirInforme()">Informe para IT</button>
+    </div>
     <p class="nota" style="margin-top:0;">Cada fila es un episodio: mediciones malas seguidas (separadas por menos de 90 segundos) se cuentan como uno solo. <b>Corte</b>: alguna medición no tuvo respuesta. <b>Demora</b>: respondió, pero tardó más de 1 segundo. La duración va desde la primera hasta la última medición mala; el corte real puede ser algo más largo, porque se mide cada 5 a 15 segundos. Los reinicios del servicio SQL Server se confirman leyendo cuándo arrancó (cada minuto). Usa el mismo período que el gráfico de arriba.</p>
+    <div id="caja-informe" style="display:none; background:#1a1a1a; border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:14px;">
+        <div class="barra-superior">
+            <div>
+                <label for="rango-informe" style="color:#aaa; font-size:13px;">Período del informe:</label>
+                <select id="rango-informe" onchange="generarInforme()">
+                    <option value="6">Últimas 6 horas</option>
+                    <option value="24" selected>Últimas 24 horas</option>
+                    <option value="72">Últimos 3 días</option>
+                    <option value="168">Últimos 7 días</option>
+                </select>
+            </div>
+            <div>
+                <button onclick="copiarInforme()">Copiar</button>
+                <button onclick="descargarInforme()">Descargar (.txt)</button>
+                <button onclick="cerrarInforme()" style="background:#444;">Cerrar</button>
+            </div>
+        </div>
+        <p class="nota" style="margin-top:0;">Resumen listo para mandar a quien administra el servidor SQL: qué pasó, a qué hora exacta, de qué lado estuvo el problema y qué conviene revisar. Se puede copiar y pegar en un mail o descargar como archivo.</p>
+        <textarea id="texto-informe" readonly rows="22" spellcheck="false" style="width:100%; box-sizing:border-box; background:#121212; color:#ddd; border:1px solid #333; border-radius:4px; padding:10px; font-family:Consolas, monospace; font-size:12px; resize:vertical;"></textarea>
+        <div id="msg-informe" class="nota"></div>
+    </div>
     <div id="arranques-sql"></div>
     <div id="resumen-episodios"></div>
     <div id="caja-episodios" class="contenedor-tabla" style="display:none;">
@@ -1085,6 +1109,106 @@ async function cargarSql() {
 
         $('msg-sql').textContent = 'No se pudo cargar el historial de la conexión al SQL Server.';
     }
+}
+
+// ------------------------------------------------------
+// INFORME PARA QUIEN ADMINISTRA EL SERVIDOR SQL
+// ------------------------------------------------------
+
+let pedidoDeInforme = 0;
+
+async function generarInforme() {
+
+    const pedido = ++pedidoDeInforme;
+    const horas = parseInt($('rango-informe').value, 10);
+
+    $('texto-informe').value = 'Armando el informe…';
+    $('msg-informe').textContent = '';
+
+    try {
+
+        const res = await fetch('/api/estado/sql-informe?horas=' + horas);
+
+        if (!res.ok) throw new Error();
+
+        const texto = await res.text();
+
+        // si mientras tanto se pidió otro período, esta respuesta ya no sirve
+        if (pedido !== pedidoDeInforme) return;
+
+        $('texto-informe').value = texto;
+
+    } catch {
+
+        if (pedido !== pedidoDeInforme) return;
+
+        $('texto-informe').value = '';
+        $('msg-informe').textContent = 'No se pudo armar el informe.';
+    }
+}
+
+function abrirInforme() {
+
+    $('caja-informe').style.display = '';
+    generarInforme();
+    $('caja-informe').scrollIntoView({ block: 'nearest' });
+}
+
+function cerrarInforme() {
+    $('caja-informe').style.display = 'none';
+}
+
+async function copiarInforme() {
+
+    const area = $('texto-informe');
+
+    if (!area.value || area.value.startsWith('Armando el informe')) return;
+
+    let copiado = false;
+
+    // La copia directa solo está disponible en páginas seguras (https o localhost); si no, se copia el texto seleccionado
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(area.value);
+            copiado = true;
+        }
+    } catch { /* se prueba el otro método */ }
+
+    if (!copiado) {
+        area.focus();
+        area.select();
+        try { copiado = document.execCommand('copy'); } catch { copiado = false; }
+    }
+
+    $('msg-informe').textContent = copiado
+        ? 'Informe copiado: ya se puede pegar en un mail o en un mensaje.'
+        : 'No se pudo copiar automáticamente: seleccioná el texto y copialo con Ctrl+C.';
+}
+
+function descargarInforme() {
+
+    const texto = $('texto-informe').value;
+
+    if (!texto || texto.startsWith('Armando el informe')) return;
+
+    const f = new Date();
+    const dos = n => String(n).padStart(2, '0');
+    const nombre = 'informe_sql_' + f.getFullYear() + '-' + dos(f.getMonth() + 1) + '-' + dos(f.getDate()) + '_' + dos(f.getHours()) + dos(f.getMinutes()) + '.txt';
+
+    // con BOM y saltos de línea de Windows, para que el Bloc de notas muestre bien los acentos y los renglones
+    const blob = new Blob(['\uFEFF' + texto.replace(/\r?\n/g, '\r\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const enlace = document.createElement('a');
+
+    enlace.href = url;
+    enlace.download = nombre;
+    document.body.appendChild(enlace);
+    enlace.click();
+    enlace.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    $('msg-informe').textContent = 'Descargado: ' + nombre;
 }
 
 // ------------------------------------------------------

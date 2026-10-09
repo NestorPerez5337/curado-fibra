@@ -3086,7 +3086,8 @@ require('./estado/rutas')(app, {
     resumenEnsayos: () => ensayosDatos.resumenSincronizacion(),
     resumenMonitor: () => monitorVariables.resumen(),
     listarLatidosSql: monitorAlmacen.listarLatidosSql,
-    listarArranquesSql: monitorAlmacen.listarArranquesSql
+    listarArranquesSql: monitorAlmacen.listarArranquesSql,
+    destinoSql: destinoSqlServer
 });
 
 app.listen(PORT, '0.0.0.0', () => {
