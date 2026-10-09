@@ -21,13 +21,16 @@ const FLATPICKR = path.join(path.dirname(require.resolve('flatpickr')), '..', 'd
 const ARCHIVOS_ESTATICOS = {
     'flatpickr.min.js': path.join(FLATPICKR, 'flatpickr.min.js'),
     'flatpickr-dark.css': path.join(FLATPICKR, 'themes', 'dark.css'),
-    'flatpickr-es.js': path.join(FLATPICKR, 'l10n', 'es.js')
+    'flatpickr-es.js': path.join(FLATPICKR, 'l10n', 'es.js'),
+    // Gráficos (el mismo Chart.js que usa el Visor PH)
+    'chart.min.js': path.join(path.dirname(require.resolve('chart.js')), 'chart.min.js')
 };
 
 const POR_PAGINA = 500;
 const MAXIMO_DIAS = 400;
 const FECHA_HORA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const SECTOR = /^[A-Za-z0-9_-]{1,20}$/;
+const MAXIMO_SECTORES = 50;
 
 // Una lectura cada ~10 min: más de 15 sin lecturas al final del período = faltan.
 const HUECO_MIN = 15;
@@ -47,7 +50,9 @@ function leerFiltros(q) {
 
     const desde = typeof q.desde === 'string' ? q.desde : '';
     const hasta = typeof q.hasta === 'string' ? q.hasta : '';
-    const sector = typeof q.sector === 'string' && q.sector.trim() ? q.sector.trim() : null;
+    // sectores=A,B,C (los tildados); vacío o ausente = todos.
+    const lista = typeof q.sectores === 'string' ? q.sectores.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const sectores = lista.length ? [...new Set(lista)] : null;
 
     if (!FECHA_HORA.test(desde) || !FECHA_HORA.test(hasta) || isNaN(minutosDe(desde)) || isNaN(minutosDe(hasta))) {
         return { error: 'Fechas inválidas' };
@@ -58,11 +63,11 @@ function leerFiltros(q) {
     if (minutosDe(hasta) - minutosDe(desde) > MAXIMO_DIAS * 1440) {
         return { error: `El rango máximo es de ${MAXIMO_DIAS} días` };
     }
-    if (sector && !SECTOR.test(sector)) {
+    if (sectores && (sectores.length > MAXIMO_SECTORES || !sectores.every(s => SECTOR.test(s)))) {
         return { error: 'Sector inválido' };
     }
 
-    return { filtros: { desde, hasta, sector } };
+    return { filtros: { desde, hasta, sectores } };
 }
 
 // Suma al resumen la advertencia de un corte al final del período (no se
@@ -82,6 +87,61 @@ function agregarHuecoFinal(sectores, filtros) {
     });
 
     return sectores;
+}
+
+// ---------- Comparación mensual ----------
+//
+// Consumo de cada sector en los últimos meses calendario (siempre todos los
+// sectores: la página filtra los tildados). Usa el mismo cálculo del medidor
+// que el resumen, un mes por vez. Los meses cerrados no cambian: se guardan
+// en memoria unas horas para no repetir la consulta.
+
+const MESES_ANTERIORES = 6;
+const CACHE_MESES_MS = 6 * 3600 * 1000;
+const cacheMeses = new Map();   // 'YYYY-MM' -> { cuando, sectores }
+
+const textoMes = (a, m) => `${a}-${String(m + 1).padStart(2, '0')}`;   // m: 0-11 (se normaliza)
+function inicioMes(a, m) { const d = new Date(a, m, 1); return textoMes(d.getFullYear(), d.getMonth()); }
+
+// Días con datos de un sector en el mes: desde el inicio del mes (o desde
+// que empezó a medirse) hasta la última lectura.
+function diasConDatos(s, desde, hasta) {
+    const ini = s.sinPrevia ? minutosDe(s.primera) - 10 : minutosDe(desde);
+    const fin = Math.min(minutosDe(hasta), minutosDe(s.ultima) + 10);
+    return Math.max(0, fin - ini) / 1440;
+}
+
+async function consumoMes(mes, enCurso) {
+
+    const guardado = cacheMeses.get(mes);
+    if (!enCurso && guardado && Date.now() - guardado.cuando < CACHE_MESES_MS) return guardado.sectores;
+
+    const [a, m] = mes.split('-').map(Number);
+    const filtros = { desde: `${mes}-01T00:00`, hasta: `${inicioMes(a, m)}-01T00:00`, sectores: null };
+    const sectores = (await consultas.resumen(filtros)).map(s => ({
+        sector: s.sector,
+        consumo: s.consumo,
+        dias: diasConDatos(s, filtros.desde, filtros.hasta),
+        desde: s.sinPrevia ? s.primera : null
+    }));
+
+    if (!enCurso) cacheMeses.set(mes, { cuando: Date.now(), sectores });
+    return sectores;
+}
+
+async function comparacionMensual() {
+
+    const hoy = new Date();
+    const meses = [];
+
+    // Del más viejo al actual, de a uno (no cargar el SQL Server con 7 consultas juntas).
+    for (let k = MESES_ANTERIORES; k >= 0; k--) {
+        const mes = inicioMes(hoy.getFullYear(), hoy.getMonth() - k);
+        const sectores = await consumoMes(mes, k === 0);
+        if (sectores.length) meses.push({ mes, enCurso: k === 0, sectores });
+    }
+
+    return { meses, ahora: ahoraLocal() };
 }
 
 function responderError(res, err) {
@@ -139,6 +199,27 @@ module.exports = function montarEnergia(app, { requierePermiso, requierePermisoP
 
         try {
             res.json(await consultas.detalle(filtros, pagina * POR_PAGINA, POR_PAGINA));
+        } catch (err) {
+            responderError(res, err);
+        }
+    });
+
+    // Consumo hora por hora de cada sector (gráficos y turno).
+    app.get('/api/energia/horas', permiso, async (req, res) => {
+
+        const { filtros, error } = leerFiltros(req.query);
+        if (error) return res.status(400).json({ error });
+
+        try {
+            res.json({ ...(await consultas.porHora(filtros)), ahora: ahoraLocal() });
+        } catch (err) {
+            responderError(res, err);
+        }
+    });
+
+    app.get('/api/energia/meses', permiso, async (req, res) => {
+        try {
+            res.json(await comparacionMensual());
         } catch (err) {
             responderError(res, err);
         }
