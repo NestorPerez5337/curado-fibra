@@ -77,5 +77,6 @@ module.exports = {
     probar: gestor.probar,
     estadoConexion: gestor.estado,
     alLatir: gestor.alLatir,
+    alArranque: gestor.alArranque,
     descripcionCortes: gestor.descripcionCortes
 };

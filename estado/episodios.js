@@ -27,6 +27,12 @@ const UNIR_EPISODIOS_MS = 90 * 1000;
 // Un episodio "sigue" si la última medición mala es de hace menos de esto
 const SIGUE_EN_CURSO_MS = 45 * 1000;
 
+// Un reinicio confirmado (ver arranques.js) explica un episodio si el servicio
+// arrancó entre un poco antes de su inicio y un par de minutos después de su fin:
+// el servidor deja de aceptar conexiones, arranca, y recién ahí se registra el arranque.
+const REINICIO_ANTES_DEL_EPISODIO_MS = 30 * 1000;
+const REINICIO_DESPUES_DEL_EPISODIO_MS = 120 * 1000;
+
 const NOMBRE_SERVICIO = {
     PH: 'Visor PH y Energía (lectura)',
     ensayos: 'Guardado de ensayos (escritura)'
@@ -110,7 +116,13 @@ function explicar(ep) {
     let titulo;
     let explicacion;
 
-    if (ep.hayPausa) {
+    if (ep.reinicio) {
+
+        causa = 'reinicio';
+        titulo = 'El servicio SQL Server se reinició';
+        explicacion = 'Confirmado: el servidor volvió a crear su base temporal (tempdb), algo que solo ocurre cuando arranca el servicio. Mientras arranca no acepta conexiones, por eso fallaron las mediciones. Si no fue un reinicio planificado (actualización, mantenimiento), preguntar a quien administra el servidor qué lo causó: en el registro de errores de SQL Server y en el visor de eventos de Windows figura el motivo.';
+
+    } else if (ep.hayPausa) {
 
         causa = 'pausa';
         titulo = 'El servicio SQL Server estaba en pausa';
@@ -197,9 +209,11 @@ function peorTexto(ep) {
     return partes.join(' · ');
 }
 
-// filas: las del historial (ver arriba), en cualquier orden. Devuelve los
-// episodios del más viejo al más nuevo.
-function detectarEpisodios(filas, { ahora = Date.now() } = {}) {
+// filas: las del historial (ver arriba), en cualquier orden.
+// reinicios: los arranques del servicio SQL Server que fueron reinicios ({ arranque, previo }, en ms);
+// sirven para confirmar cuándo un episodio fue un reinicio.
+// Devuelve los episodios del más viejo al más nuevo.
+function detectarEpisodios(filas, { ahora = Date.now(), reinicios = [] } = {}) {
 
     const malas = filas
         .map(f => ({ f, e: evaluarFila(f) }))
@@ -272,6 +286,10 @@ function detectarEpisodios(filas, { ahora = Date.now() } = {}) {
 
     return episodios.map(ep => {
 
+        ep.reinicio = reinicios.find(r =>
+            r.arranque >= ep.inicio - REINICIO_ANTES_DEL_EPISODIO_MS &&
+            r.arranque <= ep.fin + REINICIO_DESPUES_DEL_EPISODIO_MS) || null;
+
         const servicios = ['PH', 'ensayos'].filter(s => ep.servicios.has(s));
         const gravedad = ep.sinRespuesta > 0 ? 'corte' : 'demora';
         const duracionMs = Math.max(0, ep.fin - ep.inicio);
@@ -295,6 +313,7 @@ function detectarEpisodios(filas, { ahora = Date.now() } = {}) {
             peor: ep.peor,
             peorTexto: peorTexto(ep),
             soloConexionesNuevas: ep.hayLoginMalo && !ep.hayConsultaMala && !ep.haySinConexion,
+            reinicio: ep.reinicio ? { arranque: ep.reinicio.arranque, previo: ep.reinicio.previo || null } : null,
             errorEjemplo: ep.errorEjemplo
         };
     });

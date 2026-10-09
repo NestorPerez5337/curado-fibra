@@ -103,6 +103,25 @@ const lista = (async () => {
 
     await ejecutar(`CREATE INDEX IF NOT EXISTS idx_sql_latidos_epoch ON sql_latidos (epoch)`);
 
+    // Cuándo arrancó el servicio de SQL Server (ver estado/arranques.js): una fila
+    // por cada arranque distinto que se vio. La primera es el punto de partida
+    // (reinicio = 0); las siguientes son reinicios (reinicio = 1) y guardan cuándo
+    // arrancó el servicio la vez anterior (previo).
+    await ejecutar(`
+        CREATE TABLE IF NOT EXISTS sql_arranques (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            arranque INTEGER NOT NULL,
+            arranque_fecha TEXT NOT NULL,
+            detectado INTEGER NOT NULL,
+            detectado_fecha TEXT NOT NULL,
+            servicio TEXT NOT NULL,
+            reinicio INTEGER NOT NULL DEFAULT 0,
+            previo INTEGER
+        )
+    `);
+
+    await ejecutar(`CREATE INDEX IF NOT EXISTS idx_sql_arranques_arranque ON sql_arranques (arranque)`);
+
 })();
 
 lista.catch(err => console.error('Monitor: error creando las tablas:', err));
@@ -310,6 +329,37 @@ async function purgarLatidosSql(dias) {
     return resultado.changes;
 }
 
+// El arranque más nuevo que se guardó (o undefined si todavía no hay ninguno)
+async function ultimoArranqueSql() {
+
+    await lista;
+
+    return uno(`SELECT arranque, arranque_fecha, detectado, servicio, reinicio, previo FROM sql_arranques ORDER BY arranque DESC LIMIT 1`);
+}
+
+async function registrarArranqueSql({ arranque, detectado, servicio, reinicio, previo }) {
+
+    await lista;
+
+    await ejecutar(
+        `INSERT INTO sql_arranques (arranque, arranque_fecha, detectado, detectado_fecha, servicio, reinicio, previo)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [arranque, fechaLocal(new Date(arranque)), detectado, fechaLocal(new Date(detectado)), servicio, reinicio ? 1 : 0, previo || null]
+    );
+}
+
+// Los arranques desde `desde` (ms), del más viejo al más nuevo
+async function listarArranquesSql({ desde = 0 } = {}) {
+
+    await lista;
+
+    return todos(
+        `SELECT arranque, arranque_fecha, detectado, detectado_fecha, servicio, reinicio, previo
+         FROM sql_arranques WHERE arranque >= ? ORDER BY arranque ASC`,
+        [desde]
+    );
+}
+
 async function purgarEventosViejos(dias) {
 
     await lista;
@@ -336,6 +386,9 @@ module.exports = {
     registrarLatidoSql,
     listarLatidosSql,
     purgarLatidosSql,
+    ultimoArranqueSql,
+    registrarArranqueSql,
+    listarArranquesSql,
     contarEventosDesde,
     totalEventos,
     purgarEventosViejos

@@ -37,6 +37,7 @@ const BACKUP_PROBLEMA_MS = 24 * HORA;
 const ENSAYO_PENDIENTE_AVISO_MS = 15 * MIN;
 const ENSAYO_PENDIENTE_PROBLEMA_MS = 24 * HORA;
 const REINICIO_RECIENTE_MS = 10 * MIN;
+const REINICIO_SQL_AVISO_MS = 2 * HORA;     // cuánto tiempo se avisa de un reinicio del SQL Server
 const GRACIA_BACKUP_INICIAL_MS = 5 * MIN; // el primero se hace a los 30 s de arrancar
 
 const HORAS_HISTORIAL_VALIDAS = [1, 6, 24];
@@ -77,7 +78,7 @@ const desdeFechaLocal = texto => new Date(texto.replace(' ', 'T')).getTime();
 // ALERTAS (función pura: recibe los datos, devuelve la lista)
 // ======================================================
 
-function evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor, ahora = Date.now() }) {
+function evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor, sqlReinicios, ahora = Date.now() }) {
 
     const alertas = [];
     const agregar = (nivel, titulo, detalle) => alertas.push({ nivel, titulo, detalle: detalle || null });
@@ -196,6 +197,16 @@ function evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor, ahora =
         }
     }
 
+    // ---- Reinicio reciente del servicio SQL Server (para no tener que adivinarlo)
+    const ultimoReinicioSql = (sqlReinicios || [])
+        .filter(r => r.reinicio)
+        .sort((a, b) => b.arranque - a.arranque)[0];
+
+    if (ultimoReinicioSql && ahora - ultimoReinicioSql.arranque < REINICIO_SQL_AVISO_MS) {
+        agregar('aviso', 'El SQL Server se reinició',
+            `El servicio arrancó hace ${textoDuracion(ahora - ultimoReinicioSql.arranque)}. Mientras arrancaba no aceptó conexiones: el programa se reconectó solo. Si nadie lo reinició a propósito, preguntar a quien administra el servidor qué lo causó.`);
+    }
+
     // ---- Monitor de Variables
     if (monitor && monitor.conProblema.length > 0) {
         agregar('aviso', `${monitor.conProblema.length} variable(s) del Monitor con problemas`,
@@ -223,7 +234,7 @@ function nivelGeneral(alertas) {
 // RUTAS
 // ======================================================
 
-module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql }) {
+module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarArranquesSql }) {
 
     const verificador = crearVerificador({ listarObjetivos });
 
@@ -244,17 +255,18 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
 
     async function armarEstado(req) {
 
-        const [disco, ensayos, monitor, sesiones] = await Promise.all([
+        const [disco, ensayos, monitor, sesiones, sqlReinicios] = await Promise.all([
             sinFallar(sistema.disco()),
             sinFallar(resumenEnsayos()),
             sinFallar(resumenMonitor()),
-            sesionesActivas(req)
+            sesionesActivas(req),
+            sinFallar(listarArranquesSql ? listarArranquesSql({ desde: Date.now() - 24 * HORA }) : [])
         ]);
 
         const servidor = sistema.snapshot();
         const conexiones = verificador.ultimo();
 
-        const alertas = evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor });
+        const alertas = evaluarAlertas({ servidor, disco, conexiones, ensayos, monitor, sqlReinicios });
 
         return {
             generado: Date.now(),
@@ -342,7 +354,7 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         const hasta = Date.now();
 
         if (!listarLatidosSql) {
-            return res.json({ desde: hasta, hasta, mediciones: 0, resumen: resumirEpisodios([]), episodios: [] });
+            return res.json({ desde: hasta, hasta, mediciones: 0, ultimoArranque: null, reinicios: [], resumen: resumirEpisodios([]), episodios: [] });
         }
 
         try {
@@ -351,12 +363,20 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
             const desde = hasta - horas * HORA;
 
             const filas = await listarLatidosSql({ desde, hasta, limite: 200000 });
-            const episodios = detectarEpisodios(filas, { ahora: hasta });
+
+            // Los arranques del servicio SQL Server (son pocos: una fila por reinicio)
+            const arranques = (listarArranquesSql && await sinFallar(listarArranquesSql({ desde: 0 }))) || [];
+            const reinicios = arranques.filter(a => a.reinicio);
+
+            const episodios = detectarEpisodios(filas, { ahora: hasta, reinicios });
 
             res.json({
                 desde,
                 hasta,
                 mediciones: filas.length,
+                // desde cuándo está encendido el servicio, y los reinicios que hubo en el período (el más nuevo primero)
+                ultimoArranque: arranques.length ? arranques[arranques.length - 1] : null,
+                reinicios: reinicios.filter(r => r.arranque >= desde && r.arranque <= hasta).reverse(),
                 resumen: resumirEpisodios(episodios),
                 // el más reciente primero
                 episodios: episodios.slice().reverse().slice(0, MAX_EPISODIOS_PANTALLA)

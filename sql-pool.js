@@ -40,6 +40,13 @@ const TIMEOUT_TCP_MS = 5 * 1000;
 const TIMEOUT_LOGIN_FRIO_MS = 15 * 1000;
 const INTERVALO_LOGIN_FRIO_MS = 60 * 1000;
 
+// Cuándo arrancó el servicio de SQL Server. Cada vez que el servicio arranca se
+// vuelve a crear tempdb, y esa fecha de creación la puede leer cualquier cuenta
+// (no hace falta ningún permiso especial). Se lee una vez por minuto, y enseguida
+// cuando la conexión vuelve después de un corte, para enterarse de un reinicio
+// sin tener que adivinarlo. Se informa a quien se suscriba con alArranque().
+const INTERVALO_LECTURA_ARRANQUE_MS = 60 * 1000;
+
 const INTERVALO_LATIDO_MS = 15 * 1000;
 const INTERVALO_LATIDO_CAIDA_MS = 5 * 1000;     // con la base caída se prueba más seguido
 const TIMEOUT_LATIDO_MS = 10 * 1000;
@@ -175,8 +182,11 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
     let iniciado = false;
     let ultimoFrio = 0;
     let resolviendoPuerto = null;
+    let ultimaLecturaArranque = 0;
+    let leyendoArranque = false;
 
     const oyentes = [];
+    const oyentesArranque = [];
 
     const estado = {
         fase: 'esperando',      // esperando | ok | lenta | caida
@@ -360,6 +370,63 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
         oyentes.push(oyente);
     }
 
+    // { t, arranque, segundos }: `arranque` es el momento (en ms) en que arrancó el servicio
+    // de SQL Server, calculado con los segundos que lleva encendido para no depender de
+    // la zona horaria del servidor.
+    function alArranque(oyente) {
+        oyentesArranque.push(oyente);
+    }
+
+    function informarArranque(lectura) {
+
+        for (const oyente of oyentesArranque) {
+
+            try {
+                oyente(lectura);
+            } catch {
+                // un suscripto con problemas no puede afectar a la conexión
+            }
+        }
+    }
+
+    // Nunca lanza error: si falla, se vuelve a intentar en el próximo latido.
+    async function leerArranque() {
+
+        if (leyendoArranque) {
+            return;
+        }
+
+        leyendoArranque = true;
+
+        // aunque falle, no se vuelve a intentar antes del próximo minuto
+        ultimaLecturaArranque = Date.now();
+
+        try {
+
+            const pool = await abrirPool();
+
+            const resultado = await conLimite(
+                () => pool.request().query(`SELECT DATEDIFF(SECOND, create_date, GETDATE()) AS segundos FROM sys.databases WHERE name = N'tempdb'`),
+                TIMEOUT_LATIDO_MS,
+                `No respondió en ${TIMEOUT_LATIDO_MS / 1000} s`
+            );
+
+            const segundos = resultado.recordset && resultado.recordset[0] ? Number(resultado.recordset[0].segundos) : NaN;
+
+            if (Number.isFinite(segundos) && segundos >= 0) {
+
+                const ahora = Date.now();
+
+                informarArranque({ t: ahora, arranque: ahora - segundos * 1000, segundos });
+            }
+
+        } catch {
+            // se reintenta en el próximo latido
+        } finally {
+            leyendoArranque = false;
+        }
+    }
+
     function informar(medicion) {
 
         for (const oyente of oyentes) {
@@ -476,7 +543,13 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
 
                 }, TIMEOUT_LATIDO_MS, `No respondió en ${TIMEOUT_LATIDO_MS / 1000} s`);
 
+                const veniaCaida = estado.fase === 'caida';
+
                 registrarExito(Date.now() - inicio);
+
+                if (veniaCaida || Date.now() - ultimaLecturaArranque >= INTERVALO_LECTURA_ARRANQUE_MS) {
+                    leerArranque();
+                }
 
             } catch (err) {
 
@@ -563,6 +636,7 @@ function crearGestorPool({ nombre, estaConfigurado, configuracion, faltante }) {
         latir,
         iniciar,
         alLatir,
+        alArranque,
         descripcionCortes,
         estado: () => ({ ...estado, cortes: cortes.map(c => ({ ...c })) })
     };
