@@ -31,28 +31,37 @@ const MINUTO = col => `CONVERT(varchar(16), DATEADD(second, 30, ${col}), 120)`;
 // y se pasan como 'YYYY-MM-DD HH:MM:00' (estilo 120 de SQL Server).
 const fechaSql = t => `${t.replace('T', ' ')}:00`;
 
+// filtros.sectores: lista de sectores elegidos, o null = todos. Cada sector
+// va como parámetro (@s0, @s1, ...), nunca pegado en el texto de la consulta.
 function nuevaConsulta(pool, filtros) {
-    return pool.request()
+    const req = pool.request()
         .input('desde', sql.VarChar(19), fechaSql(filtros.desde))
-        .input('hasta', sql.VarChar(19), fechaSql(filtros.hasta))
-        .input('sector', sql.VarChar(20), filtros.sector || null);
+        .input('hasta', sql.VarChar(19), fechaSql(filtros.hasta));
+    (filtros.sectores || []).forEach((s, i) => req.input(`s${i}`, sql.VarChar(20), s));
+    return req;
+}
+
+// Condición SQL "es uno de los sectores elegidos" (siempre verdadera si son todos).
+function condicionSector(filtros, columna) {
+    if (!filtros.sectores) return '1 = 1';
+    return `${columna} IN (${filtros.sectores.map((_, i) => `@s${i}`).join(', ')})`;
 }
 
 // Lecturas del rango + la última lectura anterior al rango de cada sector
 // (para el medidor de inicio y para detectar un hueco que cruza "desde"),
 // con la lectura previa de cada una (tPrev / ePrev).
-const LECTURAS_CON_PREVIA = `
+const lecturasConPrevia = filtros => `
     DECLARE @d datetime2 = DATEADD(second, -30, CONVERT(datetime2, @desde, 120));
     DECLARE @h datetime2 = DATEADD(second, -30, CONVERT(datetime2, @hasta, 120));
 
     WITH sectores AS (
         SELECT DISTINCT Sector FROM dbo.PAC_Lecturas
-        WHERE @sector IS NULL OR Sector = @sector
+        WHERE ${condicionSector(filtros, 'Sector')}
     ),
     base AS (
         SELECT Sector, Timestamp, EnergiaTotal, Consumo10min, 1 AS enRango
         FROM dbo.PAC_Lecturas
-        WHERE Timestamp >= @d AND Timestamp < @h AND (@sector IS NULL OR Sector = @sector)
+        WHERE Timestamp >= @d AND Timestamp < @h AND ${condicionSector(filtros, 'Sector')}
         UNION ALL
         SELECT s.Sector, p.Timestamp, p.EnergiaTotal, p.Consumo10min, 0
         FROM sectores s
@@ -107,7 +116,7 @@ async function resumen(filtros) {
     const pool = await obtenerPool();
 
     const r = await nuevaConsulta(pool, filtros).query(`
-        ${LECTURAS_CON_PREVIA},
+        ${lecturasConPrevia(filtros)},
         n AS (
             SELECT *,
                 ROW_NUMBER() OVER (PARTITION BY Sector, enRango ORDER BY Timestamp)      AS nAsc,
@@ -165,8 +174,74 @@ function armarSector(f) {
         huecosConPerdida: f.huecosConPerdida,
         primera: f.primera,
         ultima: f.ultima,
+        // true = el sector empezó a medirse dentro del período
+        sinPrevia: f.medidorPrevio === null,
         advertencias
     };
+}
+
+// Consumo hora por hora de cada sector, para los gráficos y el turno.
+//
+// Cada lectura aporta lo que avanzó el medidor desde la lectura anterior
+// (EnergiaTotal - anterior), así la suma de todas las horas da lo mismo que
+// el consumo del resumen. Va a la hora en que se tomó la lectura, redondeada
+// al minuto como en el resto de la página (la de las 08:59:59,99 es de las 09).
+//
+// Después de un corte (más de 15 min sin lecturas) lo que avanzó el medidor
+// se reparte en las horas del corte, en proporción al tiempo: si no, un corte
+// de 3 días aparece como un pico enorme en una sola hora. Esas lecturas se
+// devuelven aparte y se reparten acá en JS. Lo anterior a "desde" va a la
+// primera hora (el resumen también lo cuenta dentro del período).
+//
+// Si el medidor se reinició (avance negativo) se usa el Consumo10min de esa
+// lectura.
+async function porHora(filtros) {
+
+    const pool = await obtenerPool();
+    const base = `${filtros.desde.slice(0, 13).replace('T', ' ')}:00:00`;
+
+    const r = await nuevaConsulta(pool, filtros)
+        .input('base', sql.VarChar(19), base)
+        .query(`
+            ${lecturasConPrevia(filtros)},
+            x AS (
+                SELECT Sector,
+                    DATEDIFF(second, CONVERT(datetime2, @base, 120), DATEADD(second, 30, Timestamp)) AS seg,
+                    CASE WHEN tPrev IS NOT NULL AND DATEDIFF(second, tPrev, Timestamp) > ${HUECO_SEG}
+                         THEN DATEDIFF(second, CONVERT(datetime2, @base, 120), DATEADD(second, 30, tPrev)) END AS segPrev,
+                    CASE WHEN ePrev IS NULL OR EnergiaTotal < ePrev THEN ISNULL(Consumo10min, 0)
+                         ELSE EnergiaTotal - ePrev END AS kwh
+                FROM l
+                WHERE enRango = 1
+            )
+            SELECT Sector AS sector, seg / 3600 AS hora, NULL AS segPrev, NULL AS seg, SUM(kwh) AS kwh
+            FROM x WHERE segPrev IS NULL
+            GROUP BY Sector, seg / 3600
+            UNION ALL
+            SELECT Sector, NULL, segPrev, seg, kwh
+            FROM x WHERE segPrev IS NOT NULL`);
+
+    const horas = Math.ceil((Date.parse(fechaSql(filtros.hasta).replace(' ', 'T') + 'Z') - Date.parse(base.replace(' ', 'T') + 'Z')) / 3600000);
+    const sectores = {};
+    const serie = s => sectores[s] || (sectores[s] = new Array(horas).fill(0));
+    const sumar = (s, h, kwh) => { serie(s)[Math.min(Math.max(h, 0), horas - 1)] += kwh; };
+
+    r.recordset.forEach(f => {
+        if (f.segPrev === null) return sumar(f.sector, f.hora, f.kwh);
+        // Lectura después de un corte: repartir entre segPrev y seg.
+        const total = f.seg - f.segPrev;
+        for (let t = f.segPrev; t < f.seg;) {
+            const finHora = (Math.floor(t / 3600) + 1) * 3600;
+            const hasta = Math.min(finHora, f.seg);
+            sumar(f.sector, Math.floor(t / 3600), f.kwh * (hasta - t) / total);
+            t = hasta;
+        }
+    });
+
+    // Redondeo a Wh: alcanza para los gráficos y achica la respuesta.
+    Object.values(sectores).forEach(v => v.forEach((x, i) => v[i] = Math.round(x * 1000) / 1000));
+
+    return { base: base.slice(0, 16).replace(' ', 'T'), horas, sectores };
 }
 
 // Una página del detalle, ordenado por sector y hora.
@@ -178,7 +253,7 @@ async function detalle(filtros, desdeFila, cantidad) {
         .input('offset', sql.Int, desdeFila)
         .input('cantidad', sql.Int, cantidad)
         .query(`
-            ${LECTURAS_CON_PREVIA}
+            ${lecturasConPrevia(filtros)}
             SELECT ${COLUMNAS_DETALLE}
             FROM l
             WHERE enRango = 1
@@ -201,7 +276,7 @@ async function recorrerDetalle(filtros, alLeer) {
         req.on('error', reject);
         req.on('done', resolve);
         req.query(`
-            ${LECTURAS_CON_PREVIA}
+            ${lecturasConPrevia(filtros)}
             SELECT ${COLUMNAS_DETALLE}
             FROM l
             WHERE enRango = 1
@@ -209,4 +284,4 @@ async function recorrerDetalle(filtros, alLeer) {
     });
 }
 
-module.exports = { listarSectores, resumen, detalle, recorrerDetalle };
+module.exports = { listarSectores, resumen, detalle, recorrerDetalle, porHora };

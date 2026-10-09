@@ -24,9 +24,15 @@ function partes(t) {
 // 'YYYY-MM-DDTHH:MM' o 'YYYY-MM-DD HH:MM' -> 'DD/MM/YYYY HH:MM'
 const legible = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)} ${t.slice(11, 16)}`;
 
+// Todos / el sector / "3_sectores" (la lista completa va en la hoja Resumen).
+function sectoresArchivo(filtros) {
+    if (!filtros.sectores) return 'Todos';
+    return filtros.sectores.length === 1 ? filtros.sectores[0] : `${filtros.sectores.length}_sectores`;
+}
+
 function nombreArchivo(filtros) {
     const f = t => t.replace('T', '_').replace(':', '');
-    return `Consumos_${filtros.sector || 'Todos'}_${f(filtros.desde)}_a_${f(filtros.hasta)}.xlsx`;
+    return `Consumos_${sectoresArchivo(filtros)}_${f(filtros.desde)}_a_${f(filtros.hasta)}.xlsx`;
 }
 
 const faltanTxt = n => n === 1 ? 'Falta 1 lectura' : `Faltan ${n} lecturas`;
@@ -67,7 +73,8 @@ async function escribirExcel(salida, { filtros, resumen, usuario }, recorrerDeta
     titulo.font = { bold: true, size: 14 };
     titulo.commit();
     r.addRow(['Período', `${legible(filtros.desde)} → ${legible(filtros.hasta)} (incluye "desde", excluye "hasta")`]).commit();
-    r.addRow(['Sector', filtros.sector || 'Todos']).commit();
+    r.addRow([filtros.sectores && filtros.sectores.length > 1 ? 'Sectores' : 'Sector',
+        filtros.sectores ? filtros.sectores.join(', ') : 'Todos']).commit();
     r.addRow(['Generado', `${generado}${usuario ? ` por ${usuario}` : ''}`]).commit();
     r.addRow([]).commit();
 

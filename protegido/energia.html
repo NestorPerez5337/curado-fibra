@@ -7,8 +7,10 @@
 <link rel="stylesheet" href="/energia-assets/flatpickr-dark.css">
 <script src="/energia-assets/flatpickr.min.js"></script>
 <script src="/energia-assets/flatpickr-es.js"></script>
+<script src="/energia-assets/chart.min.js"></script>
 <style>
-:root{ --bg:#111; --panel:#1a1a1a; --panel2:#222; --borde:#333; --texto:#eee; --tenue:#999; --acento:#00bfff; --alerta:#ffc800; --error:#ff6b6b; }
+:root{ --bg:#111; --panel:#1a1a1a; --panel2:#222; --borde:#333; --texto:#eee; --tenue:#999; --acento:#00bfff; --alerta:#ffc800; --error:#ff6b6b;
+  --sube:#ffa040; --baja:#5ec8ff; --pesos:#d7c8ff; }
 *{box-sizing:border-box}
 body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--texto);}
 header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--borde)}
@@ -24,7 +26,7 @@ button:disabled{opacity:.5;cursor:not-allowed;animation:none;box-shadow:none}
 .sinAplicar{display:none;font-size:12px;color:var(--alerta);align-self:center}
 .sinAplicar.visible{display:inline}
 .filtros{display:flex;flex-wrap:wrap;gap:12px;align-items:end;padding:14px 20px 6px}
-label{display:flex;flex-direction:column;font-size:12px;color:var(--tenue);gap:4px}
+label,.campo{display:flex;flex-direction:column;font-size:12px;color:var(--tenue);gap:4px}
 input,select{background:var(--panel2);color:var(--texto);border:1px solid #444;border-radius:6px;padding:8px;font:inherit}
 input.fecha{width:150px;cursor:pointer}
 .rapidos{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 12px;align-items:center}
@@ -34,30 +36,77 @@ input.fecha{width:150px;cursor:pointer}
 .ayuda{font-size:12px;color:var(--tenue)}
 .espacio{flex:1}
 .aviso{margin:0 20px 10px;padding:10px 14px;border-radius:6px;background:#3a1d1d;color:var(--error);display:none}
-.tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:0 20px}
+
+/* Selector de sectores con tildes */
+.multi{position:relative}
+.multiBtn{min-width:230px;text-align:left;padding:8px 10px;display:flex;justify-content:space-between;gap:10px}
+.multiBtn::after{content:'\25BE';color:var(--tenue)}
+.multi.abierto .multiBtn{border-color:var(--acento)}
+.multiPanel{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:20;background:#1c1c1c;border:1px solid #555;border-radius:8px;box-shadow:0 8px 24px #000a;width:290px;color:var(--texto);font-size:14px}
+.multi.abierto .multiPanel{display:block}
+.multiAcc{display:flex;flex-wrap:wrap;gap:5px;padding:8px;border-bottom:1px solid #333}
+.multiAcc button{padding:3px 8px;font-size:12px}
+#multiLista{max-height:330px;overflow:auto;padding:4px 0}
+#multiLista label{flex-direction:row;align-items:center;gap:8px;padding:6px 12px;color:var(--texto);font-size:14px;cursor:pointer}
+#multiLista label:hover{background:#243440}
+#multiLista input{width:16px;height:16px;accent-color:var(--acento);padding:0}
+#multiLista .grupo{font-size:11px;color:var(--tenue);text-transform:uppercase;letter-spacing:.05em;padding:8px 12px 2px}
+.multiPie{display:flex;align-items:center;gap:8px;padding:8px;border-top:1px solid #333}
+.multiPie button{margin-left:auto;padding:6px 14px}
+
+/* Turno y precio: se recalculan al instante, sin consultar */
+.recuadro{display:flex;align-items:center;gap:6px;border:1px solid #444;border-radius:6px;padding:3px 8px;color:var(--texto);font-size:13px;background:var(--panel2)}
+.recuadro select,.recuadro input{padding:5px 6px}
+.recuadro label{flex-direction:row;align-items:center;gap:5px;color:var(--texto);font-size:13px;cursor:pointer;margin-left:6px}
+.recuadro input[type=checkbox]{width:15px;height:15px;accent-color:var(--acento);padding:0}
+#precio{width:90px;text-align:right}
+.pesos{display:block;font-size:12px;color:var(--pesos);font-weight:normal;font-style:normal}
+
+.tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:0 20px}
 .tarjeta{background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:10px 12px}
 .tarjeta small{display:block;color:var(--tenue);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .tarjeta b{font-size:18px;white-space:nowrap}
+.tarjeta .sub{display:block;font-size:12px;color:var(--tenue);margin-top:2px}
+.tarjeta .pesos{font-size:13px;margin-top:2px}
 .tarjeta.ancha{grid-column:span 2}
+.tarjeta.ancha b{white-space:normal;font-size:16px;line-height:1.3}
 @media (max-width:600px){.tarjeta.ancha{grid-column:auto}}
 .tarjeta.alerta{border-color:#6b5a10}
 .tarjeta.alerta b{color:var(--alerta)}
+
+.pestanas{display:flex;gap:4px;padding:16px 20px 0;border-bottom:2px solid var(--acento);flex-wrap:wrap}
+.pestanas button{border-radius:8px 8px 0 0;border:1px solid #333;border-bottom:none;background:#161616;color:#777;padding:9px 18px}
+.pestanas button:hover{color:var(--texto);border-color:#555}
+.pestanas button.activa{background:var(--acento);color:#001018;border-color:var(--acento);font-weight:bold}
+.panel{display:none}
+.panel.activo{display:block}
+.panelPad{padding:14px 20px 24px}
+
 .grid2{display:grid;grid-template-columns:minmax(330px,440px) 1fr;gap:14px;padding:14px 20px 20px;align-items:start}
-@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.grid2.mitades{grid-template-columns:1fr 1fr;padding:0}
+@media (max-width:1000px){.grid2,.grid2.mitades{grid-template-columns:1fr}}
 .caja{background:var(--panel);border:1px solid var(--borde);border-radius:8px;overflow:hidden}
-.caja h2{font-size:15px;margin:0;padding:12px 14px;border-bottom:1px solid var(--borde);display:flex;gap:8px;align-items:center}
-.caja h2 .ayuda{font-weight:normal;margin-left:auto}
+.panelPad .caja{margin-bottom:14px}
+.caja h2{font-size:15px;margin:0;padding:12px 14px;border-bottom:1px solid var(--borde);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.caja h2 .ayuda{font-weight:normal}
+.caja h2 .derecha{margin-left:auto}
+.chip{display:inline-block;background:#173a4d;border:1px solid #1f5a78;color:#8fd3ff;border-radius:12px;padding:2px 10px;font-size:12px;font-weight:normal}
+.chip.filtrado{background:#4a3a0a;border-color:#8a6d10;color:var(--alerta)}
+.seg{display:inline-flex;border:1px solid #444;border-radius:6px;overflow:hidden;margin-left:auto}
+.seg button{border:none;border-radius:0;padding:5px 12px;font-size:13px}
+.seg button.activo{background:var(--acento);color:#001018;font-weight:bold}
+.grafico{position:relative;height:300px;padding:10px 12px 6px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{position:sticky;top:0;background:#0f3a52;color:#cfefff;text-align:left;padding:8px 10px;font-size:12px;font-weight:bold;z-index:1}
 td{padding:6px 10px;border-bottom:1px solid #262626}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 tbody tr:hover{background:#202a30}
-#tablaResumen tbody tr{cursor:pointer}
+#tablaResumen tbody tr,tr.clic{cursor:pointer}
 #tablaResumen tr.sel{background:#173a4d}
 .barra{height:6px;background:#2a2a2a;border-radius:3px;margin-top:4px;overflow:hidden}
 .barra i{display:block;height:100%;background:var(--acento)}
 .advert{display:block;font-size:11px;color:var(--alerta);margin-top:3px}
-tfoot td{font-weight:bold;border-top:2px solid #444;background:#1d1d1d}
+tfoot td,tr.total td{font-weight:bold;border-top:2px solid #444;background:#1d1d1d}
 .explica{margin:0;padding:10px 14px;border-top:1px solid var(--borde);font-size:12px;line-height:1.5;color:#bbb}
 .explica b{color:var(--texto)}
 .explica summary{cursor:pointer;color:var(--tenue)}
@@ -68,6 +117,15 @@ tr.hueco td{background:#2a2410;color:#ffd75e;font-size:12px;border-bottom:1px so
 .mono{font-family:Consolas,monospace}
 .vacio{padding:30px;text-align:center;color:var(--tenue)}
 .pie{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--borde);font-size:13px;flex-wrap:wrap}
+.nota{padding:10px 14px;border-top:1px solid var(--borde);font-size:12px;line-height:1.55;color:#bbb}
+.nota b{color:var(--texto)}
+.sube{color:var(--sube);font-weight:bold}
+.baja{color:var(--baja);font-weight:bold}
+.igual{color:var(--tenue)}
+tr.parcial td{color:#888;font-style:italic}
+tr.encurso td{background:#13283a}
+.gris{color:#888;font-style:italic}
+.mini{height:5px;margin:2px 0;border-radius:2px}
 </style>
 </head>
 <body>
@@ -80,9 +138,29 @@ tr.hueco td{background:#2a2410;color:#ffd75e;font-size:12px;border-bottom:1px so
 <div class="filtros">
   <label>Desde <input id="desde"></label>
   <label>Hasta <input id="hasta"></label>
-  <label>Sector <select id="sector"><option value="">Todos los sectores</option></select></label>
+  <div class="campo">Sectores
+    <div class="multi" id="multi">
+      <button type="button" class="multiBtn" id="multiBtn">Cargando…</button>
+      <div class="multiPanel">
+        <div class="multiAcc" id="multiAcc"></div>
+        <div id="multiLista"></div>
+        <div class="multiPie"><span class="ayuda" id="multiCuenta"></span><button class="primario" id="multiOk">Aplicar</button></div>
+      </div>
+    </div>
+  </div>
   <button class="primario" id="btnConsultar">🔍 Consultar</button>
   <span class="sinAplicar" id="sinAplicar">● Cambios sin aplicar</span>
+  <div class="campo">Turno
+    <div class="recuadro" title="Se marca en los gráficos y separa el consumo en turno / fuera de turno. Se recalcula al instante y queda guardado en este navegador.">
+      <select id="tDesde"></select> a <select id="tHasta"></select>
+      <label><input type="checkbox" id="tHabiles">solo días hábiles</label>
+    </div>
+  </div>
+  <div class="campo">Precio $/kWh
+    <div class="recuadro" title="Opcional. El precio promedio que usan para costos (de la factura: total ÷ kWh). Muestra el importe estimado de cada consumo. Queda guardado en este navegador.">
+      $ <input id="precio" placeholder="opcional" inputmode="decimal" autocomplete="off">
+    </div>
+  </div>
   <span class="espacio"></span>
   <button class="excel" id="btnExcel" disabled title="Descarga lo que se ve en pantalla">⬇ Descargar Excel</button>
 </div>
@@ -99,9 +177,17 @@ tr.hueco td{background:#2a2410;color:#ffd75e;font-size:12px;border-bottom:1px so
 
 <div class="tarjetas" id="tarjetas"></div>
 
+<div class="pestanas" id="pestanas">
+  <button data-p="lecturas" class="activa">📋 Lecturas</button>
+  <button data-p="graficos">📈 Evolución y turnos</button>
+  <button data-p="meses">📊 Comparación mensual</button>
+</div>
+
+<!-- ============ Lecturas ============ -->
+<div class="panel activo" id="p-lecturas">
 <div class="grid2">
   <div class="caja">
-    <h2>Resumen por sector <span class="ayuda">clic en un sector para ver solo ese</span></h2>
+    <h2>Resumen por sector <span class="ayuda derecha">clic en un sector para ver solo ese</span></h2>
     <table id="tablaResumen">
       <thead><tr><th>Sector</th><th class="num">Consumo (kWh)</th><th class="num">Lecturas</th></tr></thead>
       <tbody></tbody>
@@ -136,10 +222,60 @@ tr.hueco td{background:#2a2410;color:#ffd75e;font-size:12px;border-bottom:1px so
     </div>
   </div>
 </div>
+</div>
+
+<!-- ============ Evolución y turnos ============ -->
+<div class="panel panelPad" id="p-graficos">
+  <div class="caja">
+    <h2>Evolución del consumo <span class="chip selChip"></span> <span class="ayuda" id="evoInfo"></span>
+      <span class="seg" id="segEvo"><button data-g="hora">Por hora</button><button data-g="dia">Por día</button><button data-g="semana">Por semana</button></span>
+    </h2>
+    <div class="grafico"><canvas id="gEvo"></canvas></div>
+  </div>
+
+  <div class="grid2 mitades">
+    <div class="caja">
+      <h2>Día típico (kW promedio por hora) <span class="chip selChip"></span></h2>
+      <div class="ayuda" id="perfilInfo" style="padding:8px 14px 0"></div>
+      <div class="grafico"><canvas id="gPerfil"></canvas></div>
+    </div>
+
+    <div class="caja">
+      <h2>Dentro y fuera de turno <span class="chip selChip"></span> <span class="ayuda">por sector, en el período consultado</span></h2>
+      <table id="tablaTurno">
+        <thead><tr><th>Sector</th><th class="num">En turno (kWh)</th><th class="num">Fuera de turno (kWh)</th><th class="num">% fuera</th><th class="num">Base noche</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="nota"><b>Base noche</b> = potencia promedio de 00 a 05 h en días hábiles: lo que el sector consume "parado".
+        Un % fuera de turno alto en un sector que debería estar apagado es donde suele haber plata para recuperar.
+        Los días hábiles son de lunes a viernes (los feriados cuentan como hábiles).</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Comparación mensual ============ -->
+<div class="panel panelPad" id="p-meses">
+  <div class="caja">
+    <h2>Cómo viene el mes <span class="chip selChip"></span> <span class="ayuda">siempre meses calendario: no depende de las fechas consultadas (sí de los sectores)</span></h2>
+    <table id="tablaMeses">
+      <thead><tr><th>Mes</th><th class="num">Consumo (kWh)</th><th class="num">Días con datos</th><th class="num">kWh por día</th><th class="num">vs. mes anterior</th><th class="num">vs. promedio meses ant.</th><th class="num">Proyección cierre</th></tr></thead>
+      <tbody><tr><td colspan="7" class="vacio">Cargando…</td></tr></tbody>
+    </table>
+    <div class="nota">Se compara por <b>kWh por día</b> (consumo del mes ÷ días con datos, incluye fines de semana) para que el mes en curso no parezca bajo.
+      La proyección es kWh por día × días del mes. Se muestran hasta 6 meses anteriores: los datos empiezan en agosto 2026, así que la tabla va creciendo sola.
+      <span class="gris">En gris: mes sin datos de todos los sectores (o con menos de 7 días); no se usa para comparar.</span>
+      Las flechas solo indican si subió (<span class="sube">▲</span>) o bajó (<span class="baja">▼</span>); entre −3 % y +3 % se muestra en gris.</div>
+  </div>
+
+  <div class="caja" id="cajaMesSector">
+    <h2>Por sector: kWh por día <span class="chip selChip"></span> <span class="ayuda">ordenado por cambio · clic en un sector para ver solo ese</span></h2>
+    <table id="tablaMesSector"><thead></thead><tbody></tbody></table>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
-const estado = { filtros: null, sectores: [], porPagina: 500, pagina: 0, total: 0 };
+const estado = { filtros: null, sectores: [], porPagina: 500, pagina: 0, total: 0, horas: null, meses: null };
 
 // ---------- Utilidades ----------
 
@@ -160,18 +296,134 @@ const esc = t => String(t === null || t === undefined ? '' : t)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const fmt = (v, d) => Number(v || 0).toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const dos = n => String(n).padStart(2, '0');
+const sum = a => a.reduce((s, v) => s + v, 0);
 // 'YYYY-MM-DD HH:MM' o 'YYYY-MM-DDTHH:MM'
 const fechaTxt = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)}`;
 const horaTxt = t => t.slice(11, 16);
+const aFecha = t => new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10), +t.slice(11, 13) || 0, +t.slice(14, 16) || 0);
 const faltanTxt = n => n === 1 ? 'falta 1 lectura' : `faltan ${fmt(n, 0)} lecturas`;
 const duracion = m => m >= 60 ? `${Math.floor(m / 60)} h ${dos(Math.round(m % 60))} min` : `${Math.round(m)} min`;
+const DSEM = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const MES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// Lo que se guarda en el navegador (turno, precio, pestaña): puede no estar
+// disponible (modo privado, bloqueado), y la página funciona igual.
+function leerGuardado(clave) { try { return localStorage.getItem('energia.' + clave); } catch (e) { return null; } }
+function guardar(clave, valor) { try { localStorage.setItem('energia.' + clave, valor); } catch (e) { } }
 
 function parametros(f, extra) {
   const p = new URLSearchParams({ desde: f.desde, hasta: f.hasta });
-  if (f.sector) p.set('sector', f.sector);
+  if (f.sectores) p.set('sectores', f.sectores.join(','));
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return p.toString();
 }
+
+// ---------- Sectores (lista con tildes) ----------
+// Los cambios se aplican con "Aplicar" o al cerrar la lista; Esc cancela.
+
+let todosLosSectores = [], sel = new Set();
+const lista = $('multiLista');
+const tildes = () => [...lista.querySelectorAll('input')];
+const grupoDe = s => s.split('_')[0];
+const sonTodos = set => set.size === todosLosSectores.length;
+const elegidos = () => todosLosSectores.filter(s => sel.has(s));
+
+function textoSel(set) {
+  const a = todosLosSectores.filter(s => set.has(s));
+  if (sonTodos(set)) return `Todos los sectores (${a.length})`;
+  return a.length <= 2 ? a.join(', ') : `${a.length} sectores`;
+}
+
+function armarLista(sectores) {
+  todosLosSectores = sectores;
+  const grupos = [...new Set(sectores.map(grupoDe))];
+  lista.innerHTML = grupos.map(g => `<div class="grupo">${esc(g)}</div>` +
+    sectores.filter(s => grupoDe(s) === g).map(s => `<label><input type="checkbox" value="${esc(s)}">${esc(s)}</label>`).join('')).join('');
+  $('multiAcc').innerHTML = '<button data-a="*">Todos</button><button data-a="">Ninguno</button>' +
+    (grupos.length > 1 ? grupos.map(g => `<button data-a="${esc(g)}">Solo ${esc(g)}</button>`).join('') : '');
+  sel = new Set(sectores);
+  $('multiBtn').textContent = textoSel(sel);
+}
+
+function cuentaLista() {
+  const n = tildes().filter(x => x.checked).length;
+  $('multiCuenta').textContent = n ? `${n} de ${todosLosSectores.length} tildados` : 'Tildá al menos uno';
+  $('multiOk').disabled = !n;
+}
+const listaAbierta = () => $('multi').classList.contains('abierto');
+function abrirLista() { tildes().forEach(x => x.checked = sel.has(x.value)); cuentaLista(); $('multi').classList.add('abierto'); }
+function cerrarLista(aplicar) {
+  if (!listaAbierta()) return;
+  $('multi').classList.remove('abierto');
+  const nuevo = new Set(tildes().filter(x => x.checked).map(x => x.value));
+  if (!aplicar || !nuevo.size) return;
+  const cambio = nuevo.size !== sel.size || [...nuevo].some(s => !sel.has(s));
+  if (cambio) elegirSectores(nuevo);
+}
+function elegirSectores(set) {
+  sel = set;
+  $('multiBtn').textContent = textoSel(sel);
+  $('multiBtn').title = elegidos().join(', ');
+  consultar();
+}
+
+$('multiBtn').onclick = () => listaAbierta() ? cerrarLista(true) : abrirLista();
+lista.onchange = cuentaLista;
+$('multiOk').onclick = () => cerrarLista(true);
+$('multiAcc').onclick = ev => {
+  const a = ev.target.dataset.a; if (a === undefined) return;
+  tildes().forEach(x => x.checked = a === '*' || (a !== '' && grupoDe(x.value) === a));
+  cuentaLista();
+};
+document.addEventListener('mousedown', ev => { if (!ev.target.closest('#multi')) cerrarLista(true); });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') cerrarLista(false); });
+
+// ---------- Turno y precio (en este navegador) ----------
+// Turno: si "hasta" es menor que "desde" cruza la medianoche (ej. 22 a 06) y
+// las horas de la madrugada son del día en que empezó; iguales = todo el día.
+
+const turno = { desde: 8, hasta: 17, habiles: true };
+try { Object.assign(turno, JSON.parse(leerGuardado('turno')) || {}); } catch (e) { }
+
+function enTurno(fecha) {
+  const h = fecha.getHours(), { desde, hasta } = turno;
+  let dentro, dia = fecha.getDay();
+  if (desde < hasta) dentro = h >= desde && h < hasta;
+  else if (desde > hasta) { dentro = h >= desde || h < hasta; if (h < hasta) dia = (dia + 6) % 7; }
+  else dentro = true;
+  return dentro && (!turno.habiles || (dia >= 1 && dia <= 5));
+}
+const franjas = () => turno.desde < turno.hasta ? [[turno.desde, turno.hasta]]
+  : turno.desde > turno.hasta ? [[turno.desde, 24], [0, turno.hasta]] : [[0, 24]];
+const textoTurno = () => `${dos(turno.desde)} a ${dos(turno.hasta)} h${turno.habiles ? ' · L a V' : ''}`;
+
+for (let h = 0; h < 24; h++) $('tDesde').add(new Option(dos(h) + ':00', h));
+for (let h = 0; h <= 24; h++) $('tHasta').add(new Option(dos(h) + ':00', h));
+$('tDesde').value = turno.desde; $('tHasta').value = turno.hasta; $('tHabiles').checked = turno.habiles;
+$('tDesde').onchange = $('tHasta').onchange = $('tHabiles').onchange = () => {
+  turno.desde = +$('tDesde').value; turno.hasta = +$('tHasta').value; turno.habiles = $('tHabiles').checked;
+  guardar('turno', JSON.stringify(turno));
+  pintarCalculado();
+};
+
+// Precio: acepta "125,50", "125.50" o "1.250,50". Vacío = no se muestran importes.
+let precio = null;
+function leerPrecio(t) {
+  t = String(t || '').replace(/[$\s]/g, '');
+  if (!t) return null;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  const v = parseFloat(t);
+  return v > 0 ? v : null;
+}
+const pesos = kwh => precio ? `<span class="pesos">≈ $ ${fmt(kwh * precio, 0)}</span>` : '';
+$('precio').value = leerGuardado('precio') || '';
+precio = leerPrecio($('precio').value);
+$('precio').oninput = () => {
+  precio = leerPrecio($('precio').value);
+  $('precio').style.borderColor = $('precio').value.trim() && !precio ? 'var(--error)' : '';
+  guardar('precio', $('precio').value.trim());
+  pintarCalculado();
+};
 
 // ---------- Rangos rápidos ----------
 
@@ -219,19 +471,24 @@ function marcarPendiente(si) {
 // ---------- Consulta ----------
 
 async function consultar() {
-  const f = { desde: $('desde').value, hasta: $('hasta').value, sector: $('sector').value };
+  const f = { desde: $('desde').value, hasta: $('hasta').value, sectores: sonTodos(sel) ? null : elegidos() };
   mostrarError(null);
   if (!f.desde || !f.hasta || f.hasta <= f.desde) { mostrarError(new Error('"Hasta" tiene que ser posterior a "desde"')); return; }
 
   const btn = $('btnConsultar');
   btn.disabled = true; btn.textContent = 'Consultando…';
   try {
-    const r = await api('/api/energia/resumen?' + parametros(f));
+    const [r, horas] = await Promise.all([
+      api('/api/energia/resumen?' + parametros(f)),
+      api('/api/energia/horas?' + parametros(f))
+    ]);
     marcarPendiente(false);
     estado.filtros = r.filtros; estado.sectores = r.sectores; estado.porPagina = r.porPagina;
     estado.total = r.sectores.reduce((a, s) => a + s.lecturas, 0);
+    estado.horas = prepararHoras(horas);
     estado.pagina = 0;
     pintarResumen();
+    pintarCalculado();
     await cargarPagina();
   } catch (err) {
     mostrarError(err);
@@ -244,8 +501,8 @@ async function consultar() {
 function pintarResumen() {
   const f = estado.filtros, s = [...estado.sectores].sort((a, b) => b.consumo - a.consumo);
   const total = s.reduce((a, x) => a + x.consumo, 0);
-  const noReg = s.reduce((a, x) => a + x.noRegistrado, 0);
   const maximo = s.length ? Math.max(...s.map(x => x.consumo), 0.001) : 1;
+  const unico = f.sectores && f.sectores.length === 1 ? f.sectores[0] : null;
 
   $('tablaResumen').tBodies[0].innerHTML = s.length ? s.map(x => {
     let notas = '';
@@ -253,26 +510,19 @@ function pintarResumen() {
     // en la lectura siguiente no se pierde, y se ve en celeste en el detalle.
     if (x.noRegistrado > 0.01) notas += `<span class="advert">⚠ ${faltanTxt(x.faltan)} · el detalle suma ${fmt(x.noRegistrado, 1)} kWh menos</span>`;
     x.advertencias.forEach(a => notas += `<span class="advert">⚠ ${esc(a)}</span>`);
-    return `<tr data-s="${esc(x.sector)}" class="${f.sector === x.sector ? 'sel' : ''}">
+    return `<tr data-s="${esc(x.sector)}" class="${unico === x.sector ? 'sel' : ''}">
       <td>${esc(x.sector)}<div class="barra"><i style="width:${Math.max(0, x.consumo) / maximo * 100}%"></i></div>${notas}</td>
       <td class="num">${fmt(x.consumo, 2)}</td><td class="num">${fmt(x.lecturas, 0)}</td></tr>`;
   }).join('') : '<tr><td colspan="3" class="vacio">No hay lecturas en ese período</td></tr>';
   $('tablaResumen').tFoot.innerHTML = s.length > 1
     ? `<tr><td>Total</td><td class="num">${fmt(total, 2)}</td><td class="num">${fmt(estado.total, 0)}</td></tr>` : '';
-  document.querySelectorAll('#tablaResumen tbody tr[data-s]').forEach(tr => tr.onclick = () => { $('sector').value = tr.dataset.s; consultar(); });
-
-  const minutos = (Date.parse(f.hasta + ':00Z') - Date.parse(f.desde + ':00Z')) / 60000;
-  const tarjetas = [
-    ['Consumo total (medidor)', `${fmt(total, 2)} kWh`],
-    ['Rango', `${fechaTxt(f.desde)} ${horaTxt(f.desde)} → ${fechaTxt(f.hasta)} ${horaTxt(f.hasta)}`, 'ancha'],
-    ['Duración', minutos >= 2880 ? `${fmt(minutos / 1440, 1)} días` : `${fmt(minutos / 60, 0)} horas`],
-    ['Sector', f.sector || `Todos (${s.length})`],
-    ['Lecturas guardadas', fmt(estado.total, 0)],
-  ];
-  // Solo cuando hay consumo que el detalle no tiene (lecturas perdidas).
-  if (noReg > 0.01) tarjetas.push(['No registrado en el detalle', `⚠ ${fmt(noReg, 1)} kWh`, 'alerta']);
-  $('tarjetas').innerHTML = tarjetas.map(([k, v, c]) => `<div class="tarjeta ${c || ''}"><small>${k}</small><b>${esc(v)}</b></div>`).join('');
 }
+
+// Clic en una fila de sector (en cualquier tabla) = ver solo ese sector.
+document.addEventListener('click', ev => {
+  const tr = ev.target.closest('#tablaResumen tbody tr[data-s], tr.clic[data-s]');
+  if (tr) elegirSectores(new Set([tr.dataset.s]));
+});
 
 async function cargarPagina() {
   const tbody = $('tablaDetalle').tBodies[0];
@@ -312,13 +562,358 @@ function filaDetalle(l) {
     <td class="num ${largo ? 'largo' : ''}">${l.minutos === null ? '—' : fmt(l.minutos, 0)}</td></tr>`;
 }
 
+// ---------- Datos por hora (gráficos, turno) ----------
+// Todo lo de abajo se calcula en el navegador con estado.horas: cambiar el
+// turno o el precio no vuelve a consultar.
+
+// Fecha de inicio de cada hora y cuántas horas ya pasaron (las del futuro,
+// en "Mes actual", no cuentan para promedios). Se calculan una vez por consulta.
+function prepararHoras(h) {
+  const base = aFecha(h.base), ahora = aFecha(h.ahora);
+  h.fechas = Array.from({ length: h.horas }, (_, i) => { const d = new Date(base); d.setHours(d.getHours() + i); return d; });
+  h.pasadas = h.fechas.filter(f => f.getTime() + 3600e3 <= ahora.getTime()).length || Math.min(1, h.horas);
+  // Primera hora con datos: si el período empieza antes de que se midiera,
+  // esas horas vacías no cuentan para los promedios.
+  const series = Object.values(h.sectores);
+  h.inicio = 0;
+  while (h.inicio < h.horas && !series.some(v => v[h.inicio] > 0)) h.inicio++;
+  return h;
+}
+// Horas que cuentan para promedios (día típico, base noche).
+const horaConDatos = i => i >= estado.horas.inicio && i < estado.horas.pasadas;
+const fechaHora = i => estado.horas.fechas[i];
+const seriesHoras = () => Object.entries(estado.horas.sectores);   // [[sector, [kWh por hora]], ...]
+const esHabil = f => f.getDay() >= 1 && f.getDay() <= 5;
+
+function calcTurno(v) {
+  let dentro = 0, fuera = 0, base = 0, nb = 0;
+  v.forEach((k, i) => {
+    const f = fechaHora(i);
+    if (enTurno(f)) dentro += k; else fuera += k;
+    if (horaConDatos(i) && esHabil(f) && f.getHours() < 5) { base += k; nb++; }
+  });
+  return { dentro, fuera, base: nb ? base / nb : null };
+}
+
+// Todo lo que depende del turno o del precio.
+function pintarCalculado() {
+  if (!estado.filtros) return;
+  pintarTarjetas();
+  pintarChips();
+  pintarEvolucion();
+  pintarPerfil();
+  pintarTablaTurno();
+  pintarMeses();
+}
+
+function pintarTarjetas() {
+  const f = estado.filtros, s = estado.sectores;
+  const total = s.reduce((a, x) => a + x.consumo, 0);
+  const noReg = s.reduce((a, x) => a + x.noRegistrado, 0);
+  const minutos = (Date.parse(f.hasta + ':00Z') - Date.parse(f.desde + ':00Z')) / 60000;
+  // Para el promedio por día: solo el tiempo con datos (desde que empezó a
+  // medirse, si fue dentro del período) y que ya pasó.
+  const ahora = aFecha(estado.horas.ahora), fin = Math.min(aFecha(f.hasta), ahora);
+  const inicio = !s.length || s.some(x => !x.sinPrevia) ? aFecha(f.desde)
+    : Math.min(...s.map(x => aFecha(x.primera))) - 10 * 60000;
+  const diasPasados = (fin - inicio) / 864e5;
+  let dentro = 0, fuera = 0;
+  seriesHoras().forEach(([, v]) => { const r = calcTurno(v); dentro += r.dentro; fuera += r.fuera; });
+  const pct = x => dentro + fuera > 0 ? fmt(100 * x / (dentro + fuera), 0) : '0';
+
+  const tarjetas = [
+    ['Consumo total (medidor)', `${fmt(total, 2)} kWh`, '', pesos(total)],
+    ['Rango', `${fechaTxt(f.desde)} ${horaTxt(f.desde)} → ${fechaTxt(f.hasta)} ${horaTxt(f.hasta)}`, 'ancha'],
+    ['Duración', minutos >= 2880 ? `${fmt(minutos / 1440, 1)} días` : `${fmt(minutos / 60, 0)} horas`],
+  ];
+  if (diasPasados >= 2) tarjetas.push(['Promedio por día', `${fmt(total / diasPasados, 0)} kWh`, '', pesos(total / diasPasados)]);
+  tarjetas.push(
+    ['En turno', `${fmt(dentro, 0)} kWh`, '', pesos(dentro) + `<span class="sub">${pct(dentro)} % del total · ${textoTurno()}</span>`],
+    ['Fuera de turno', `${fmt(fuera, 0)} kWh`, 'alerta', pesos(fuera) + `<span class="sub">${pct(fuera)} % del total</span>`],
+    ['Sectores', f.sectores ? (f.sectores.length <= 2 ? f.sectores.join(', ') : `${f.sectores.length} sectores`) : `Todos (${s.length})`],
+    ['Lecturas guardadas', fmt(estado.total, 0)]
+  );
+  // Solo cuando hay consumo que el detalle no tiene (lecturas perdidas).
+  if (noReg > 0.01) tarjetas.push(['No registrado en el detalle', `⚠ ${fmt(noReg, 1)} kWh`, 'alerta']);
+  $('tarjetas').innerHTML = tarjetas.map(([k, v, c, extra]) =>
+    `<div class="tarjeta ${c || ''}"><small>${k}</small><b>${esc(v)}</b>${extra || ''}</div>`).join('');
+}
+
+// En cada gráfico/tabla: de qué sectores es lo que se ve.
+function pintarChips() {
+  const f = estado.filtros, a = f.sectores;
+  const t = !a ? `Todos los sectores (${todosLosSectores.length})` : a.length <= 3 ? a.join(' + ') : `${a.length} sectores`;
+  document.querySelectorAll('.selChip').forEach(c => { c.textContent = t; c.title = a ? a.join(', ') : ''; c.classList.toggle('filtrado', !!a); });
+}
+
+// ---------- Gráficos ----------
+
+Chart.defaults.color = '#aaa';
+Chart.defaults.borderColor = '#2a2a2a';
+Chart.defaults.font.family = 'Arial, Helvetica, sans-serif';
+Chart.defaults.locale = 'es-AR';
+const COLORES = ['#00bfff', '#ffb000', '#7ee081', '#ff6b9a', '#b18cff', '#4dd0c8'];
+const OTROS = '#6b6b6b';
+const graficos = {};
+
+// Fondo verde detrás de las columnas/franjas que son "en turno".
+const pluginTurno = {
+  id: 'turno',
+  beforeDatasetsDraw(chart, args, op) {
+    if (!op.marcas) return;
+    const { ctx, chartArea: a, scales: { x } } = chart;
+    ctx.save();
+    ctx.fillStyle = 'rgba(70,140,70,.16)';
+    op.marcas(x).forEach(([x1, x2]) => ctx.fillRect(x1, a.top, x2 - x1, a.bottom - a.top));
+    ctx.restore();
+  }
+};
+
+let granularidad = null;   // null = automática según el rango
+
+function granularidadAuto() {
+  const n = estado.horas.horas;
+  return n <= 48 ? 'hora' : n <= 62 * 24 ? 'dia' : 'semana';
+}
+
+// Agrupa las horas en columnas (por hora, día o semana).
+function columnas(g) {
+  const h = estado.horas, cols = [], porClave = {};
+  for (let i = 0; i < h.horas; i++) {
+    const f = fechaHora(i);
+    let clave, etiqueta, titulo;
+    if (g === 'hora') {
+      clave = i; etiqueta = f.getHours() === 0 || i === 0 ? `${DSEM[f.getDay()]} ${f.getDate()}/${f.getMonth() + 1}` : `${dos(f.getHours())}h`;
+      titulo = `${DSEM[f.getDay()]} ${f.getDate()}/${f.getMonth() + 1} · ${dos(f.getHours())}:00 a ${dos(f.getHours() + 1)}:00`;
+    } else if (g === 'dia') {
+      clave = f.toDateString(); etiqueta = `${DSEM[f.getDay()]} ${f.getDate()}/${f.getMonth() + 1}`; titulo = etiqueta;
+    } else {
+      const l = new Date(f); l.setHours(0, 0, 0, 0); l.setDate(l.getDate() - (l.getDay() + 6) % 7);
+      clave = l.toDateString(); etiqueta = `Sem. ${l.getDate()}/${l.getMonth() + 1}`; titulo = `Semana del lunes ${l.getDate()}/${l.getMonth() + 1}`;
+    }
+    if (!(clave in porClave)) { porClave[clave] = cols.length; cols.push({ etiqueta, titulo, horas: [] }); }
+    cols[porClave[clave]].horas.push(i);
+  }
+  return cols;
+}
+
+// Hasta 6 sectores: cada uno con su color. Más: los 5 que más consumen + "Otros".
+function seriesGrafico() {
+  const s = seriesHoras().map(([n, v]) => ({ n, v, t: sum(v) })).sort((a, b) => b.t - a.t);
+  if (s.length <= 6) return s.map((x, k) => ({ n: x.n, c: COLORES[k], v: x.v }));
+  const otros = new Array(estado.horas.horas).fill(0);
+  s.slice(5).forEach(x => x.v.forEach((k, i) => otros[i] += k));
+  return s.slice(0, 5).map((x, k) => ({ n: x.n, c: COLORES[k], v: x.v })).concat({ n: `Otros (${s.length - 5})`, c: OTROS, v: otros });
+}
+
+function pintarEvolucion() {
+  const g = granularidad || granularidadAuto();
+  document.querySelectorAll('#segEvo button').forEach(b => {
+    b.classList.toggle('activo', b.dataset.g === g);
+    b.disabled = b.dataset.g === 'hora' && estado.horas.horas > 31 * 24;
+  });
+  const cols = columnas(g), series = seriesGrafico();
+  const sombra = g === 'hora' ? cols.map(c => enTurno(fechaHora(c.horas[0]))) : null;
+  $('evoInfo').textContent = (g === 'hora' ? '1 columna por hora · fondo verde = turno' : g === 'dia' ? '1 columna por día' : '1 columna por semana (de lunes a domingo)')
+    + (granularidad ? '' : ' · automático según el rango');
+
+  const datasets = series.map(s => ({
+    label: s.n, backgroundColor: s.c, stack: 'a', borderWidth: 0,
+    data: cols.map(c => sum(c.horas.map(i => s.v[i])))
+  }));
+  if (graficos.evo) graficos.evo.destroy();
+  graficos.evo = new Chart($('gEvo'), {
+    type: 'bar',
+    data: { labels: cols.map(c => c.etiqueta), datasets },
+    plugins: [pluginTurno],
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxRotation: 0, autoSkipPadding: 12 } },
+        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'kWh' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12 } },
+        turno: { marcas: sombra && (x => sombra.map((s, i) => s ? [x.getPixelForValue(i) - x.width / cols.length / 2, x.getPixelForValue(i) + x.width / cols.length / 2] : null).filter(Boolean)) },
+        tooltip: {
+          filter: it => it.raw > 0.05,
+          itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
+          callbacks: {
+            title: it => cols[it[0].dataIndex].titulo,
+            label: it => ` ${it.dataset.label}: ${fmt(it.raw, 1)} kWh`,
+            footer: it => {
+              const i = it[0].dataIndex, t = sum(datasets.map(d => d.data[i]));
+              const lineas = [`Total: ${fmt(t, 1)} kWh` + (precio ? ` ≈ $ ${fmt(t * precio, 0)}` : '')];
+              if (sombra) lineas.push(sombra[i] ? '● en turno' : '○ fuera de turno');
+              return lineas;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+$('segEvo').onclick = ev => {
+  const g = ev.target.dataset.g; if (!g || ev.target.disabled) return;
+  granularidad = g === granularidadAuto() ? null : g;
+  pintarEvolucion();
+};
+
+function pintarPerfil() {
+  const total = new Array(estado.horas.horas).fill(0);
+  seriesHoras().forEach(([, v]) => v.forEach((k, i) => total[i] += k));
+  const hab = Array(24).fill(0), fin = Array(24).fill(0), nh = Array(24).fill(0), nf = Array(24).fill(0);
+  total.forEach((k, i) => {
+    if (!horaConDatos(i)) return;
+    const f = fechaHora(i), h = f.getHours();
+    if (esHabil(f)) { hab[h] += k; nh[h]++; } else { fin[h] += k; nf[h]++; }
+  });
+  const prom = (a, n) => a.map((v, h) => n[h] ? { x: h + 0.5, y: v / n[h] } : null).filter(Boolean);
+  const diasH = Math.max(...nh), diasF = Math.max(...nf);
+  $('perfilInfo').textContent = (seriesHoras().length > 1 ? 'Suma de los sectores · ' : '') +
+    `promedio de ${diasH} día${diasH === 1 ? '' : 's'} hábil${diasH === 1 ? '' : 'es'} y ${diasF} de fin de semana del período · fondo verde = turno`;
+
+  if (graficos.perfil) graficos.perfil.destroy();
+  graficos.perfil = new Chart($('gPerfil'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Días hábiles', data: prom(hab, nh), borderColor: '#00bfff', backgroundColor: '#00bfff', borderWidth: 2.5, pointRadius: 3 },
+      { label: 'Sábado y domingo', data: prom(fin, nf), borderColor: '#ffb000', backgroundColor: '#ffb000', borderWidth: 2.5, pointRadius: 3 }
+    ] },
+    plugins: [pluginTurno],
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'x', intersect: false },
+      scales: {
+        x: { type: 'linear', min: 0, max: 24, ticks: { stepSize: 3, callback: v => `${dos(v)}h` }, grid: { display: false } },
+        y: { beginAtZero: true, title: { display: true, text: 'kW' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12 } },
+        turno: { marcas: x => franjas().map(([a, b]) => [x.getPixelForValue(a), x.getPixelForValue(b)]) },
+        tooltip: { callbacks: {
+          title: it => { const h = Math.floor(it[0].raw.x); return `${dos(h)}:00 a ${dos(h + 1)}:00`; },
+          label: it => ` ${it.dataset.label}: ${fmt(it.raw.y, 0)} kW`
+        } }
+      }
+    }
+  });
+}
+
+function pintarTablaTurno() {
+  const filas = seriesHoras().map(([s, v]) => ({ s, ...calcTurno(v) })).sort((a, b) => b.fuera - a.fuera);
+  const pct = f => f.dentro + f.fuera > 0 ? 100 * f.fuera / (f.dentro + f.fuera) : 0;
+  const base = b => b === null ? '—' : `${fmt(b, 0)} kW`;
+  let html = filas.map(f => `<tr class="clic" data-s="${esc(f.s)}"><td>${esc(f.s)}</td>
+    <td class="num">${fmt(f.dentro, 0)}${pesos(f.dentro)}</td><td class="num">${fmt(f.fuera, 0)}${pesos(f.fuera)}</td>
+    <td class="num" style="color:${pct(f) > 50 ? 'var(--alerta)' : 'inherit'}">${fmt(pct(f), 0)} %</td><td class="num">${base(f.base)}</td></tr>`).join('');
+  if (filas.length > 1) {
+    const t = { dentro: sum(filas.map(f => f.dentro)), fuera: sum(filas.map(f => f.fuera)) };
+    const b = filas.some(f => f.base !== null) ? sum(filas.map(f => f.base || 0)) : null;
+    html += `<tr class="total"><td>Total</td><td class="num">${fmt(t.dentro, 0)}${pesos(t.dentro)}</td><td class="num">${fmt(t.fuera, 0)}${pesos(t.fuera)}</td>
+      <td class="num">${fmt(pct(t), 0)} %</td><td class="num">${base(b)}</td></tr>`;
+  }
+  $('tablaTurno').tBodies[0].innerHTML = html || '<tr><td colspan="5" class="vacio">Sin lecturas</td></tr>';
+}
+
+// ---------- Comparación mensual ----------
+// estado.meses trae todos los sectores; acá se filtran los tildados.
+
+const diasDelMes = mes => new Date(+mes.slice(0, 4), +mes.slice(5, 7), 0).getDate();
+const nombreMes = mes => `${MES[+mes.slice(5, 7) - 1]} ${mes.slice(0, 4)}`;
+
+// kWh y kWh/día de un mes para unos sectores. Como se compara por día, un
+// sector que empezó a medirse a mitad de mes se compara igual (incompleto).
+// No se compara (parcial) si falta algún sector o tiene menos de 7 días.
+function datosMes(m, sects) {
+  let kwh = 0, porDia = 0, dias = 0, parcial = false, incompleto = false, hay = false, desde = null;
+  sects.forEach(s => {
+    const e = m.sectores.find(x => x.sector === s);
+    if (!e || e.dias <= 0) { parcial = true; return; }
+    hay = true; kwh += e.consumo; porDia += e.consumo / e.dias; dias = Math.max(dias, e.dias);
+    if (e.dias < 7) parcial = true;
+    if (!m.enCurso && e.dias < diasDelMes(m.mes) - 1) { incompleto = true; desde = e.desde; }
+  });
+  return hay ? { kwh, porDia, dias, parcial, incompleto, desde } : null;
+}
+
+function flecha(v) {
+  if (v === null || !isFinite(v)) return '<span class="igual">—</span>';
+  const c = Math.abs(v) < 0.03 ? 'igual' : v > 0 ? 'sube' : 'baja';
+  return `<span class="${c}">${v > 0 ? '▲ +' : v < 0 ? '▼ ' : ''}${fmt(v * 100, 0)} %</span>`;
+}
+
+function pintarMeses() {
+  if (!estado.meses || !estado.filtros) return;
+  const meses = estado.meses.meses;
+  const sects = estado.filtros.sectores || todosLosSectores;
+  const d = meses.map(m => datosMes(m, sects));
+  let filas = '';
+  for (let k = meses.length - 1; k >= 0; k--) {
+    const m = meses[k], x = d[k]; if (!x) continue;
+    const ant = k > 0 && d[k - 1] && !d[k - 1].parcial ? d[k - 1] : null;
+    const previos = d.slice(0, k).filter(y => y && !y.parcial);
+    const prom = previos.length ? sum(previos.map(y => y.porDia)) / previos.length : null;
+    const compara = !x.parcial || m.enCurso;
+    const nota = m.enCurso ? ` <span class="chip">en curso · al ${fechaTxt(estado.meses.ahora).slice(0, 5)} ${horaTxt(estado.meses.ahora)}</span>`
+      : x.parcial ? ' (parcial: faltan sectores, no se compara)'
+      : x.incompleto ? ` <span class="ayuda">(${sects.length === 1 && x.desde ? `datos desde el ${fechaTxt(x.desde).slice(0, 5)}` : 'algún sector empezó a mitad de mes'})</span>` : '';
+    filas += `<tr class="${m.enCurso ? 'encurso' : x.parcial ? 'parcial' : ''}">
+      <td>${nombreMes(m.mes)}${nota}</td>
+      <td class="num">${fmt(x.kwh, 0)}${pesos(x.kwh)}</td><td class="num">${fmt(x.dias, 1)}</td>
+      <td class="num"><b>${fmt(x.porDia, 0)}</b>${pesos(x.porDia)}</td>
+      <td class="num">${compara && ant ? flecha(x.porDia / ant.porDia - 1) : flecha(null)}</td>
+      <td class="num">${compara && prom ? flecha(x.porDia / prom - 1) + `<span class="ayuda"> (${previos.length} mes${previos.length > 1 ? 'es' : ''})</span>` : flecha(null)}</td>
+      <td class="num">${m.enCurso ? `≈ ${fmt(x.porDia * diasDelMes(m.mes), 0)} kWh${pesos(x.porDia * diasDelMes(m.mes))}` : ''}</td></tr>`;
+  }
+  $('tablaMeses').tBodies[0].innerHTML = filas || '<tr><td colspan="7" class="vacio">Sin datos</td></tr>';
+
+  // Por sector (solo si hay más de uno)
+  $('cajaMesSector').style.display = sects.length > 1 ? '' : 'none';
+  if (sects.length < 2) return;
+  const ult = meses.length - 1, abrev = m => MES[+m.mes.slice(5, 7) - 1].slice(0, 3);
+  $('tablaMesSector').tHead.innerHTML = `<tr><th>Sector</th>${meses.map(m => `<th class="num">${abrev(m)}${m.enCurso ? ' (en curso)' : ''}</th>`).join('')}
+    <th class="num">${ult > 0 ? `${abrev(meses[ult])} vs. ${abrev(meses[ult - 1])}` : ''}</th><th style="width:25%">kWh por día</th></tr>`;
+  const rows = sects.map(s => {
+    const v = meses.map(m => datosMes(m, [s])), a = v[ult - 1], c = v[ult];
+    return { s, v, cambio: a && c && !a.parcial ? c.porDia / a.porDia - 1 : null };
+  }).sort((a, b) => Math.abs(b.cambio || 0) - Math.abs(a.cambio || 0));
+  const maxD = Math.max(1, ...rows.flatMap(r => r.v.filter(Boolean).map(x => x.porDia)));
+  $('tablaMesSector').tBodies[0].innerHTML = rows.map(r => `<tr class="clic" data-s="${esc(r.s)}"><td>${esc(r.s)}</td>
+    ${r.v.map(x => x ? `<td class="num ${x.parcial || x.incompleto ? 'gris' : ''}">${fmt(x.porDia, 0)}</td>` : '<td class="num igual">—</td>').join('')}
+    <td class="num">${flecha(r.cambio)}</td>
+    <td>${r.v.map((x, k) => `<div class="mini" style="width:${x ? 100 * x.porDia / maxD : 0}%;background:${k === ult ? '#00bfff' : k === ult - 1 ? '#3f6f86' : '#333'}"></div>`).join('')}</td></tr>`).join('');
+}
+
+async function cargarMeses() {
+  try {
+    estado.meses = await api('/api/energia/meses');
+    pintarMeses();
+  } catch (err) {
+    $('tablaMeses').tBodies[0].innerHTML = `<tr><td colspan="7" class="vacio">No se pudo cargar: ${esc(err.message)}</td></tr>`;
+  }
+}
+
+// ---------- Pestañas ----------
+
+function mostrarPestana(p) {
+  document.querySelectorAll('#pestanas button').forEach(b => b.classList.toggle('activa', b.dataset.p === p));
+  document.querySelectorAll('.panel').forEach(x => x.classList.toggle('activo', x.id === 'p-' + p));
+  guardar('pestana', p);
+  // Chart.js no puede medir un gráfico oculto: se ajusta al mostrarlo.
+  Object.values(graficos).forEach(g => g.resize());
+}
+document.querySelectorAll('#pestanas button').forEach(b => b.onclick = () => mostrarPestana(b.dataset.p));
+if ($('p-' + leerGuardado('pestana'))) mostrarPestana(leerGuardado('pestana'));
+
 // ---------- Eventos ----------
 
 const conAviso = fn => async (...args) => { try { await fn(...args); } catch (err) { mostrarError(err); } };
 
 document.querySelectorAll('.rapidos button').forEach(b => b.onclick = () => rango(b.dataset.r));
 $('btnConsultar').onclick = consultar;
-$('sector').onchange = consultar;
 $('btnAnt').onclick = conAviso(async () => { estado.pagina--; await cargarPagina(); });
 $('btnSig').onclick = conAviso(async () => { estado.pagina++; await cargarPagina(); });
 // Descarga lo último consultado (lo que se ve en pantalla), no lo que haya
@@ -326,8 +921,8 @@ $('btnSig').onclick = conAviso(async () => { estado.pagina++; await cargarPagina
 $('btnExcel').onclick = () => { if (estado.filtros) window.location.href = '/api/energia/excel?' + parametros(estado.filtros); };
 
 conAviso(async () => {
-  const sectores = await api('/api/energia/sectores');
-  sectores.forEach(s => $('sector').add(new Option(s, s)));
+  armarLista(await api('/api/energia/sectores'));
+  cargarMeses();
   rango('mes');
 })();
 </script>
