@@ -2211,6 +2211,12 @@ let datosEnsayo = [];
 let opActual = '';
 let canoActual = '';
 
+// Para el semáforo de actualización (ver estado/semaforo.js): cuándo empezó el ensayo en
+// curso, y si se está guardando uno recién terminado (en ese rato ensayoActivo ya es false
+// pero el ensayo todavía no está a salvo).
+let inicioEnsayoMs = null;
+let guardandoEnsayo = false;
+
 let lecturaEnCurso = false;
 
 // Al apagarse la variable del PLC, seguimos tomando muestras
@@ -2236,6 +2242,35 @@ const estadoPlcEnsayo = {
     mensajeFallo: null,
     fallosSeguidos: 0
 };
+
+// Estado del ensayo para el semáforo "¿se puede actualizar ahora?" del panel de Estado y del menú.
+// Combina lo que está en memoria con el avance guardado en la base local (si por algún motivo
+// uno de los dos dice que hay un ensayo, se considera que lo hay).
+async function estadoEnsayoParaSemaforo() {
+
+    const enCurso = await ensayosDatos.obtenerEnCurso().catch(() => null);
+
+    const activo = ensayoActivo || !!enCurso;
+
+    return {
+        ensayo: {
+            activo,
+            enGracia: ensayoActivo && enGracia,
+            guardando: guardandoEnsayo,
+            op: ensayoActivo ? opActual : (enCurso ? enCurso.op : null),
+            cano: ensayoActivo ? canoActual : (enCurso ? enCurso.cano : null),
+            muestras: ensayoActivo ? datosEnsayo.length : (enCurso ? enCurso.cantidad : 0),
+            inicio: ensayoActivo
+                ? inicioEnsayoMs
+                : (enCurso && enCurso.inicio ? new Date(String(enCurso.inicio).replace(' ', 'T')).getTime() : null)
+        },
+        plc: {
+            ultimaLecturaOk: estadoPlcEnsayo.ultimaLecturaOk,
+            fallosSeguidos: estadoPlcEnsayo.fallosSeguidos,
+            mensajeFallo: estadoPlcEnsayo.mensajeFallo
+        }
+    };
+}
 
 // ======================================================
 // MODBUS ENSAYO
@@ -2420,6 +2455,8 @@ setInterval(async () => {
 
             datosEnsayo = [];
 
+            inicioEnsayoMs = Date.now();
+
             console.log('INICIO ENSAYO');
 
             const opData =
@@ -2517,7 +2554,16 @@ setInterval(async () => {
 
             tiempoApagado = null;
 
-            await guardarEnsayoTerminado();
+            inicioEnsayoMs = null;
+
+            // Mientras se guarda, el ensayo ya no figura "en curso" pero todavía no está a salvo
+            guardandoEnsayo = true;
+
+            try {
+                await guardarEnsayoTerminado();
+            } finally {
+                guardandoEnsayo = false;
+            }
 
             datosEnsayo = [];
         }
@@ -3089,7 +3135,8 @@ require('./estado/rutas')(app, {
     listarLatidosAnormalesSql: monitorAlmacen.listarLatidosAnormalesSql,
     contarLatidosSql: monitorAlmacen.contarLatidosSql,
     listarArranquesSql: monitorAlmacen.listarArranquesSql,
-    destinoSql: destinoSqlServer
+    destinoSql: destinoSqlServer,
+    estadoEnsayo: estadoEnsayoParaSemaforo
 });
 
 app.listen(PORT, '0.0.0.0', () => {

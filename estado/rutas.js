@@ -19,6 +19,7 @@ const { crearVerificador } = require('./conexiones');
 const { detectarEpisodios, resumirEpisodios, filtrarEpisodios, CAUSAS, UMBRAL_LENTO_MS } = require('./episodios');
 const { explicarError } = require('./explicaciones');
 const { armarInforme } = require('./informe');
+const { evaluarSemaforo } = require('./semaforo');
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -239,7 +240,7 @@ function nivelGeneral(alertas) {
 // RUTAS
 // ======================================================
 
-module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarLatidosAnormalesSql, contarLatidosSql, listarArranquesSql, destinoSql }) {
+module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina, listarObjetivos, resumenEnsayos, resumenMonitor, listarLatidosSql, listarLatidosAnormalesSql, contarLatidosSql, listarArranquesSql, destinoSql, estadoEnsayo }) {
 
     const verificador = crearVerificador({ listarObjetivos });
 
@@ -258,14 +259,24 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         req.sessionStore.length((err, cantidad) => resolve(err ? null : cantidad));
     });
 
+    // El semáforo "¿se puede actualizar ahora?": si no se pudo averiguar el estado del ensayo,
+    // no dice "verde" (ver semaforo.js).
+    async function armarSemaforo() {
+
+        const datos = estadoEnsayo ? await sinFallar(estadoEnsayo()) : null;
+
+        return evaluarSemaforo({ ensayo: datos && datos.ensayo, plc: datos && datos.plc });
+    }
+
     async function armarEstado(req) {
 
-        const [disco, ensayos, monitor, sesiones, sqlReinicios] = await Promise.all([
+        const [disco, ensayos, monitor, sesiones, sqlReinicios, semaforo] = await Promise.all([
             sinFallar(sistema.disco()),
             sinFallar(resumenEnsayos()),
             sinFallar(resumenMonitor()),
             sesionesActivas(req),
-            sinFallar(listarArranquesSql ? listarArranquesSql({ desde: Date.now() - 24 * HORA }) : [])
+            sinFallar(listarArranquesSql ? listarArranquesSql({ desde: Date.now() - 24 * HORA }) : []),
+            armarSemaforo()
         ]);
 
         const servidor = sistema.snapshot();
@@ -276,6 +287,7 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
         return {
             generado: Date.now(),
             general: nivelGeneral(alertas),
+            semaforo,
             alertas,
             servidor,
             sesiones,
@@ -311,6 +323,17 @@ module.exports = function montarEstado(app, { requiereAdmin, requiereAdminPagina
             res.json(await armarEstado(req));
         } catch (err) {
             console.error('Estado: error verificando conexiones:', err);
+            res.status(500).send('Error');
+        }
+    });
+
+    // Solo el semáforo "¿se puede actualizar ahora?" (liviano: lo consulta el menú cada pocos segundos)
+    app.get('/api/semaforo', requiereAdmin, async (req, res) => {
+
+        try {
+            res.json(await armarSemaforo());
+        } catch (err) {
+            console.error('Estado: error armando el semáforo:', err.message);
             res.status(500).send('Error');
         }
     });
