@@ -18,6 +18,11 @@
         .menu-cabecera { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
         .menu-cabecera h2 { margin:0; color:#007bff; font-size:22px; }
         .menu-usuario { display:flex; align-items:center; gap:12px; color:#aaa; font-size:14px; }
+        .semaforo-menu { display:none; align-items:center; gap:8px; padding:7px 13px; border-radius:20px; font-size:13px; font-weight:bold; text-decoration:none; border:1px solid #333; }
+        .semaforo-menu .luz { width:12px; height:12px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+        .semaforo-menu.verde { color:#2ee66b; border-color:#1e5a2e; background:#16351f; }
+        .semaforo-menu.amarillo { color:#ffc107; border-color:#6b4a10; background:#3d2f0e; }
+        .semaforo-menu.rojo { color:#ff6b75; border-color:#6b1f27; background:#3d1217; }
         .btn-salir { padding:9px 16px; background:#dc3545; color:#fff; border:none; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; }
         #menu-buscar { width:100%; box-sizing:border-box; padding:13px 14px; font-size:15px; background:#1f1f1f; color:#fff; border:1px solid #333; border-radius:8px; }
         #menu-buscar:focus { outline:none; border-color:#007bff; }
@@ -78,6 +83,7 @@
             <div class="menu-cabecera">
                 <h2>SISTEMA DE CONTROL</h2>
                 <div class="menu-usuario">
+                    <a id="menu-semaforo" class="semaforo-menu" href="/estado" title=""><span class="luz"></span><span id="menu-semaforo-texto"></span></a>
                     <span id="menu-usuario"></span>
                     <button type="button" class="btn-salir" onclick="logout()">Cerrar sesión</button>
                 </div>
@@ -290,10 +296,44 @@
             }
         }
 
+        // Semáforo "¿se puede actualizar ahora?" (solo administradores): verde si no hay un ensayo
+        // en curso, rojo si lo hay. Un clic lleva al panel de Estado con el detalle.
+        let temporizadorSemaforo = null;
+
+        async function actualizarSemaforo() {
+
+            if (!yo || !yo.esAdmin || document.hidden || document.getElementById('menu-screen').style.display === 'none') return;
+
+            const pastilla = document.getElementById('menu-semaforo');
+
+            try {
+
+                const res = await fetch('/api/semaforo');
+
+                if (!res.ok) throw new Error();
+
+                const s = await res.json();
+
+                pastilla.className = 'semaforo-menu ' + s.nivel;
+                pastilla.title = s.titulo + '. ' + s.detalle;
+                document.getElementById('menu-semaforo-texto').textContent = s.textoCorto;
+                pastilla.style.display = 'inline-flex';
+
+            } catch (e) {
+
+                pastilla.style.display = 'none';
+            }
+        }
+
         function mostrarMenu() {
             document.getElementById('menu-usuario').innerText = `Usuario: ${yo.usuario}`;
             document.getElementById('menu-buscar').value = '';
             renderMenu();
+
+            if (yo.esAdmin) {
+                actualizarSemaforo();
+                if (!temporizadorSemaforo) temporizadorSemaforo = setInterval(actualizarSemaforo, 5000);
+            }
 
             document.getElementById('panel-devanadoras').style.display = 'none';
             document.getElementById('menu-screen').style.display = 'block';

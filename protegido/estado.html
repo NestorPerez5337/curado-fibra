@@ -32,6 +32,17 @@
     .general.ok { background:#16351f; border:1px solid #1e5a2e; color:#9be3b0; }
     .general.aviso { background:#3d2f0e; border:1px solid #6b4a10; color:#ffd58a; }
     .general.problema { background:#3d1217; border:1px solid #6b1f27; color:#ffb3ba; }
+    .semaforo { display:flex; align-items:center; gap:16px; padding:14px 18px; border-radius:8px; margin-bottom:12px; border:1px solid #333; background:#1f1f1f; }
+    .semaforo .lamparas { display:flex; gap:7px; flex:none; background:#0d0d0d; padding:8px 10px; border-radius:20px; border:1px solid #333; }
+    .semaforo .lampara { display:block; width:22px; height:22px; border-radius:50%; background:#2a2a2a; }
+    .semaforo.rojo { background:#3d1217; border-color:#6b1f27; }
+    .semaforo.amarillo { background:#3d2f0e; border-color:#6b4a10; }
+    .semaforo.verde { background:#16351f; border-color:#1e5a2e; }
+    .semaforo.rojo .lampara.roja { background:#ff3b47; box-shadow:0 0 12px #ff3b47; }
+    .semaforo.amarillo .lampara.amarilla { background:#ffc107; box-shadow:0 0 12px #ffc107; }
+    .semaforo.verde .lampara.verde { background:#2ee66b; box-shadow:0 0 12px #2ee66b; }
+    .semaforo .titulo { display:block; font-size:18px; font-weight:bold; margin-bottom:3px; }
+    .semaforo .detalle { color:#ccc; font-size:13px; }
     .alerta { border-left:4px solid #555; background:#1a1a1a; padding:8px 12px; margin-bottom:8px; border-radius:0 4px 4px 0; }
     .alerta.problema { border-left-color:#dc3545; }
     .alerta.aviso { border-left-color:#ffc107; }
@@ -79,6 +90,8 @@
 </div>
 
 <div id="msg" class="msg"></div>
+
+<div id="semaforo"></div>
 
 <div id="resumen"></div>
 
@@ -664,6 +677,20 @@ function renderMonitor(e) {
     $('monitor').innerHTML = html;
 }
 
+// Semáforo "¿se puede actualizar ahora?": las lámparas son solo ayuda visual; lo que importa está en el texto
+function renderSemaforo(s) {
+
+    if (!s) {
+        $('semaforo').innerHTML = '';
+        return;
+    }
+
+    $('semaforo').innerHTML = `<div class="semaforo ${esc(s.nivel)}" role="status">
+        <div class="lamparas" aria-hidden="true"><i class="lampara roja"></i><i class="lampara amarilla"></i><i class="lampara verde"></i></div>
+        <div><span class="titulo">${esc(s.titulo)}</span><span class="detalle">${esc(s.detalle)}</span></div>
+    </div>`;
+}
+
 function renderErrores(e) {
 
     if (!e.errores.length) {
@@ -699,6 +726,7 @@ function render(e) {
 
     estado = e;
 
+    renderSemaforo(e.semaforo);
     renderResumen(e);
     renderMemoria(e);
     renderCpu(e);
