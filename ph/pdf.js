@@ -69,7 +69,9 @@ async function generarPdfEnsayo(ensayos, usuario) {
     const u = ensayo.unidad;
     const num = v => (v === null || v === undefined) ? '—' : String(Math.round(v));
     const mmss = GraficoPH.mmss;
-    const canos = ensayo.cano2 ? `${ensayo.cano} y ${ensayo.cano2}` : ensayo.cano;
+    // Caño 0 = el PLC dejó ensayar sin número de caño.
+    const canos = ensayo.cano2 ? `${ensayo.cano} y ${ensayo.cano2}`
+        : ensayo.cano === '0' ? '0 (sin número)' : ensayo.cano;
 
     // Encabezado
     doc.font('Helvetica-Bold').fontSize(16).fillColor('#111')
