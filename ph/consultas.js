@@ -63,6 +63,11 @@ async function listarEnsayos(maquina, op, cano) {
 
     const pool = await obtenerPool();
 
+    // "0" en NumeroCano2 significa un solo caño, no el caño 0: sin el NOT IN,
+    // el caño 0 (ensayo sin número, lo permite el PLC) traía todos los
+    // ensayos de la OP.
+    const segundoCano = maquina.tieneCano2 ? `OR (m.NumeroCano2 = @cano AND @cano NOT IN ('', '0'))` : '';
+
     const r = await pool.request()
         .input('op', ...texto(op))
         .input('cano', ...texto(cano))
@@ -80,7 +85,7 @@ async function listarEnsayos(maquina, op, cano) {
                 FROM ${maquina.detalle} WHERE Id_Maestro = m.Id
             ) d
             WHERE m.NumeroOP = @op
-              AND (m.NumeroCano = @cano ${maquina.tieneCano2 ? 'OR m.NumeroCano2 = @cano' : ''})
+              AND (m.NumeroCano = @cano ${segundoCano})
             ORDER BY m.FechaEnsayo DESC, m.Id DESC`);
 
     return r.recordset.map(e => ({ ...e, cano2: normalizarCano2(e.cano2) }));

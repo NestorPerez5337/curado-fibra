@@ -162,6 +162,8 @@ function opcion(valor, texto) {
 const diaMesHora = t => `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)}`;
 const fechaLarga = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)}`;
 const num = v => v === null || v === undefined ? '—' : String(Math.round(v));
+// El PLC a veces deja ensayar sin número de caño: queda grabado como 0.
+const textoCano = c => c === '0' ? '0 (sin número)' : c;
 
 function actualizarUrl() {
   const p = new URLSearchParams();
@@ -206,7 +208,7 @@ async function cargarCanos(canoInicial) {
   const canos = await api(`/api/ph/${estado.maquina}/canos?op=${encodeURIComponent(op)}`);
   if (!canos.length) { $('vacio').textContent = `No hay ensayos para la OP ${op}`; actualizarUrl(); return; }
 
-  canos.forEach(c => $('cano').appendChild(opcion(c.cano, c.ensayos > 1 ? `${c.cano}  (${c.ensayos} ensayos)` : c.cano)));
+  canos.forEach(c => $('cano').appendChild(opcion(c.cano, c.ensayos > 1 ? `${textoCano(c.cano)}  (${c.ensayos} ensayos)` : textoCano(c.cano))));
   $('cano').disabled = false;
   if (canoInicial && canos.some(c => c.cano === canoInicial)) $('cano').value = canoInicial;
   else $('cano').value = canos[canos.length - 1].cano;   // el último caño de la OP
@@ -243,7 +245,7 @@ function pintarTarjetas(e) {
   const r = e.resumen, u = e.unidad;
   const t = [
     ['OP', e.op],
-    [e.cano2 ? 'Caños' : 'Caño', e.cano2 ? `${e.cano} y ${e.cano2}` : e.cano],
+    [e.cano2 ? 'Caños' : 'Caño', e.cano2 ? `${e.cano} y ${e.cano2}` : textoCano(e.cano)],
     ['Presión mín / máx', `${num(e.min)} / ${num(e.max)} ${u}`],
     ['Fecha', r ? fechaLarga(r.inicio) : fechaLarga(e.fechaEnsayo)],
     ['Inicio – fin', r ? `${r.inicio.slice(11, 19)} – ${r.fin.slice(11, 19)}` : '—'],
