@@ -41,7 +41,7 @@
     .chip.restablecida { background:#1e5a2e; color:#9be3b0; }
     .detalle { color:#999; font-size:11px; margin-top:4px; }
     .valor { font-family:Consolas, monospace; font-size:14px; }
-    .oculto { display:none; }
+    .oculto { display:none !important; }
     .barra-filtros { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
     .barra-filtros > div { display:flex; flex-direction:column; }
     .cantidad { color:#888; font-size:12px; margin-top:8px; }
@@ -99,9 +99,24 @@
             </div>
             <div id="grupo-formato" class="oculto">
                 <label>Formato</label>
-                <select id="f-formato">
-                    <option value="uint16">Sin signo (0 a 65535)</option>
-                    <option value="int16">Con signo (-32768 a 32767)</option>
+                <select id="f-formato" onchange="cambiarFormato()">
+                    <option value="uint16">Entero de 16 bits sin signo (0 a 65535)</option>
+                    <option value="int16">Entero de 16 bits con signo (-32768 a 32767)</option>
+                    <option value="uint32">Entero de 32 bits sin signo (2 registros)</option>
+                    <option value="int32">Entero de 32 bits con signo (2 registros)</option>
+                    <option value="float32">Decimal de 32 bits / float (2 registros)</option>
+                    <option value="bit">Un bit del registro (ON/OFF)</option>
+                </select>
+            </div>
+            <div id="grupo-bit" class="oculto">
+                <label>Bit (0 a 15)</label>
+                <input type="number" id="f-bit" min="0" max="15" step="1" style="width:80px;" placeholder="0">
+            </div>
+            <div id="grupo-orden" class="oculto">
+                <label>Orden de los 2 registros</label>
+                <select id="f-orden">
+                    <option value="alta">El primero trae la parte alta (lo más común)</option>
+                    <option value="baja">El primero trae la parte baja (ej.: Modicon)</option>
                 </select>
             </div>
             <div>
@@ -140,7 +155,31 @@
         </div>
     </div>
 
-    <p class="ayuda" id="ayuda-banda">Banda: con 0 se registra cualquier cambio. En valores analógicos que oscilan conviene una banda (ej.: 2) para que solo quede registrado el cambio de al menos esa cantidad. Con "Avisar si no llega nada" en 0, no se vigila el silencio del tópico.</p>
+    <p class="ayuda oculto" id="ayuda-formato32">Los formatos de 32 bits leen la dirección indicada y la siguiente (con la dirección 100 se leen la 100 y la 101). Si el valor sale disparatado, probá con el otro orden de los registros.</p>
+
+    <div id="grupo-escala">
+        <div class="fila-form">
+            <div>
+                <label>Factor (multiplica)</label>
+                <input type="number" id="f-factor" value="1" step="any" style="width:110px;">
+            </div>
+            <div>
+                <label>Suma</label>
+                <input type="number" id="f-suma" value="0" step="any" style="width:110px;">
+            </div>
+            <div>
+                <label>Decimales</label>
+                <input type="number" id="f-decimales" min="0" max="6" step="1" style="width:90px;" placeholder="auto">
+            </div>
+            <div>
+                <label>Unidad</label>
+                <input type="text" id="f-unidad" maxlength="12" style="width:100px;" placeholder="Ej.: °C">
+            </div>
+        </div>
+        <p class="ayuda">Escala: valor que se muestra = valor del equipo × factor + suma. Ejemplo: si el equipo manda 253 para una temperatura de 25,3 °C, poné factor 0,1 y unidad °C. Con "Decimales" vacío se muestra el número tal cual, sin ceros de más. En MQTT la escala solo sirve si el valor que llega es un número.</p>
+    </div>
+
+    <p class="ayuda" id="ayuda-banda">Banda: con 0 se registra cualquier cambio. En valores analógicos que oscilan conviene una banda (ej.: 2) para que solo quede registrado el cambio de al menos esa cantidad; se mide en las unidades que se muestran, ya con la escala. Con "Avisar si no llega nada" en 0, no se vigila el silencio del tópico.</p>
 
     <button class="btn-guardar" id="btn-guardar" onclick="guardarVariable()">Agregar variable</button>
     <button class="btn-gris oculto" id="btn-cancelar" onclick="cancelarEdicion()">Cancelar edición</button>
@@ -285,20 +324,49 @@ function cambiarTipo() {
     const esModbus = valorDe('f-tipo') === 'modbus';
     document.getElementById('campos-modbus').classList.toggle('oculto', !esModbus);
     document.getElementById('campos-mqtt').classList.toggle('oculto', esModbus);
-    cambiarFuncion();
+    actualizarCampos();
 }
 
 function cambiarFuncion() {
-    const esRegistro = ['holding', 'input'].includes(valorDe('f-funcion'));
-    document.getElementById('grupo-formato').classList.toggle('oculto', !esRegistro);
-    document.getElementById('grupo-banda-modbus').classList.toggle('oculto', !esRegistro);
+    actualizarCampos();
+}
+
+function cambiarFormato() {
+    actualizarCampos();
+}
+
+const FORMATOS_32_BITS = ['uint32', 'int32', 'float32'];
+
+// Muestra solo los campos que tienen sentido para lo que se eligió: el formato
+// solo en registros; el bit solo si se pide un bit; el orden solo en 32 bits;
+// la escala y la banda en todo lo numérico (los bits valen ON/OFF).
+function actualizarCampos() {
+
+    const esModbus = valorDe('f-tipo') === 'modbus';
+    const esRegistro = esModbus && ['holding', 'input'].includes(valorDe('f-funcion'));
+    const formato = valorDe('f-formato');
+    const esBit = esRegistro && formato === 'bit';
+    const es32 = esRegistro && FORMATOS_32_BITS.includes(formato);
+
+    const ocultar = (id, oculto) => document.getElementById(id).classList.toggle('oculto', oculto);
+
+    ocultar('grupo-formato', !esRegistro);
+    ocultar('grupo-bit', !esBit);
+    ocultar('grupo-orden', !es32);
+    ocultar('ayuda-formato32', !es32);
+    ocultar('grupo-banda-modbus', !esRegistro || esBit);
+    ocultar('grupo-escala', esModbus && (!esRegistro || esBit));
 }
 
 function datosDelFormulario() {
 
     const base = {
         nombre: valorDe('f-nombre'),
-        tipo: valorDe('f-tipo')
+        tipo: valorDe('f-tipo'),
+        factor: valorDe('f-factor'),
+        desplazamiento: valorDe('f-suma'),
+        decimales: valorDe('f-decimales'),
+        unidad: valorDe('f-unidad')
     };
 
     if (base.tipo === 'modbus') {
@@ -310,6 +378,8 @@ function datosDelFormulario() {
             funcion: valorDe('f-funcion'),
             direccion: valorDe('f-direccion'),
             formato: valorDe('f-formato'),
+            bit_registro: valorDe('f-bit'),
+            orden_palabras: valorDe('f-orden'),
             intervalo_ms: valorDe('f-intervalo'),
             banda: valorDe('f-banda-modbus')
         };
@@ -355,8 +425,11 @@ function limpiarFormulario() {
 
     editandoId = null;
 
-    ['f-nombre', 'f-ip', 'f-direccion', 'f-topico', 'f-campo'].forEach(id => { document.getElementById(id).value = ''; });
+    ['f-nombre', 'f-ip', 'f-direccion', 'f-topico', 'f-campo', 'f-bit', 'f-decimales', 'f-unidad'].forEach(id => { document.getElementById(id).value = ''; });
 
+    document.getElementById('f-factor').value = 1;
+    document.getElementById('f-suma').value = 0;
+    document.getElementById('f-orden').value = 'alta';
     document.getElementById('f-puerto').value = 502;
     document.getElementById('f-unit').value = 1;
     document.getElementById('f-intervalo').value = 1000;
@@ -392,6 +465,11 @@ function editarVariable(id) {
     document.getElementById('f-nombre').value = v.nombre;
     document.getElementById('f-tipo').value = v.tipo;
 
+    document.getElementById('f-factor').value = v.factor === null || v.factor === undefined ? 1 : v.factor;
+    document.getElementById('f-suma').value = v.desplazamiento === null || v.desplazamiento === undefined ? 0 : v.desplazamiento;
+    document.getElementById('f-decimales').value = v.decimales === null || v.decimales === undefined ? '' : v.decimales;
+    document.getElementById('f-unidad').value = v.unidad || '';
+
     if (v.tipo === 'modbus') {
         document.getElementById('f-ip').value = v.ip;
         document.getElementById('f-puerto').value = v.puerto;
@@ -399,6 +477,8 @@ function editarVariable(id) {
         document.getElementById('f-funcion').value = v.funcion;
         document.getElementById('f-direccion').value = v.direccion;
         document.getElementById('f-formato').value = v.formato || 'uint16';
+        document.getElementById('f-bit').value = v.bit_registro === null || v.bit_registro === undefined ? '' : v.bit_registro;
+        document.getElementById('f-orden').value = v.orden_palabras || 'alta';
         document.getElementById('f-intervalo').value = v.intervalo_ms;
         document.getElementById('f-banda-modbus').value = v.banda;
     } else {
@@ -462,6 +542,14 @@ async function eliminarVariable(id) {
     await cargarEventos();
 }
 
+const NOMBRE_FORMATO = {
+    uint16: 'entero de 16 bits',
+    int16: 'entero de 16 bits con signo',
+    uint32: 'entero de 32 bits',
+    int32: 'entero de 32 bits con signo',
+    float32: 'decimal de 32 bits'
+};
+
 function describirOrigen(v) {
 
     if (v.tipo === 'modbus') {
@@ -469,6 +557,44 @@ function describirOrigen(v) {
     }
 
     return 'MQTT ' + v.topico + (v.campo ? ' → ' + v.campo : '');
+}
+
+// Segunda línea del origen: cómo se interpreta el valor (solo lo que no es
+// lo de siempre).
+function describirInterpretacion(v) {
+
+    const partes = [];
+
+    if (v.tipo === 'modbus' && ['holding', 'input'].includes(v.funcion)) {
+
+        const formato = v.formato || 'uint16';
+
+        if (formato === 'bit') {
+            partes.push('bit ' + v.bit_registro);
+        } else if (FORMATOS_32_BITS.includes(formato)) {
+            partes.push(NOMBRE_FORMATO[formato] + ' (registros ' + v.direccion + ' y ' + (v.direccion + 1) +
+                (v.orden_palabras === 'baja' ? ', primero la parte baja' : '') + ')');
+        } else {
+            partes.push(NOMBRE_FORMATO[formato]);
+        }
+    }
+
+    const factor = v.factor === null || v.factor === undefined ? 1 : v.factor;
+    const suma = v.desplazamiento === null || v.desplazamiento === undefined ? 0 : v.desplazamiento;
+
+    if (factor !== 1 || suma !== 0) {
+        partes.push('escala × ' + factor + (suma !== 0 ? (suma > 0 ? ' + ' : ' − ') + Math.abs(suma) : ''));
+    }
+
+    if (v.decimales !== null && v.decimales !== undefined) {
+        partes.push(v.decimales + (v.decimales === 1 ? ' decimal' : ' decimales'));
+    }
+
+    return partes.join(' · ');
+}
+
+function valorConUnidad(v) {
+    return v.valor === null ? '—' : v.valor + (v.unidad ? ' ' + v.unidad : '');
 }
 
 function pintarVariables() {
@@ -488,8 +614,8 @@ function pintarVariables() {
                 ${v.estado_desde && v.estado !== 'ok' && v.estado !== 'pausada' ? `<div class="detalle">desde ${esc(v.estado_desde)}</div>` : ''}
             </td>
             <td>${esc(v.nombre)}</td>
-            <td>${esc(describirOrigen(v))}</td>
-            <td class="valor">${v.valor === null ? '—' : esc(v.valor)}</td>
+            <td>${esc(describirOrigen(v))}${describirInterpretacion(v) ? `<div class="detalle">${esc(describirInterpretacion(v))}</div>` : ''}</td>
+            <td class="valor">${esc(valorConUnidad(v))}</td>
             <td>${esc(v.ultimo_dato || '—')}</td>
             <td>${esc(v.ultimo_cambio || '—')}</td>
             <td style="white-space:nowrap;">

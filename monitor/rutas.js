@@ -9,8 +9,9 @@ const path = require('path');
 const almacen = require('./almacen');
 const crearMotor = require('./motor');
 
+const { ESCALA_NEUTRA, validarEscala, validarFormatoRegistro } = require('./valores');
+
 const FUNCIONES = ['coil', 'discreta', 'holding', 'input'];
-const FORMATOS = ['uint16', 'int16'];
 const TIPOS_EVENTO = ['cambio', 'conexion_perdida', 'sin_datos', 'error_lectura', 'restablecida'];
 
 const RETENCION_DIAS = 90;
@@ -69,8 +70,30 @@ function validar(body) {
 
         const esRegistro = b.funcion === 'holding' || b.funcion === 'input';
 
-        if (esRegistro && b.formato && !FORMATOS.includes(b.formato)) {
-            return { error: 'El formato del registro no es válido' };
+        let registro = { formato: null, bit_registro: null, orden_palabras: null };
+
+        if (esRegistro) {
+
+            const resultado = validarFormatoRegistro(b, direccion);
+
+            if (resultado.error) return resultado;
+
+            registro = resultado.datos;
+        }
+
+        // Los bits (coil, entrada discreta o un bit de un registro) valen ON/OFF:
+        // no tienen escala, unidad ni banda.
+        const esBit = !esRegistro || registro.formato === 'bit';
+
+        let escala = ESCALA_NEUTRA;
+
+        if (!esBit) {
+
+            const resultado = validarEscala(b);
+
+            if (resultado.error) return resultado;
+
+            escala = resultado.datos;
         }
 
         return {
@@ -83,13 +106,14 @@ function validar(body) {
                 unit_id: unitId,
                 funcion: b.funcion,
                 direccion,
-                formato: esRegistro ? (b.formato || 'uint16') : null,
+                ...registro,
                 broker: null,
                 topico: null,
                 campo: null,
                 intervalo_ms: intervalo,
-                banda: esRegistro ? banda : 0,
-                timeout_s: 0
+                banda: esBit ? 0 : banda,
+                timeout_s: 0,
+                ...escala
             }
         };
     }
@@ -108,6 +132,10 @@ function validar(body) {
         if (campo && !REGEX_CAMPO.test(campo)) return { error: 'El campo JSON no es válido (ej.: maquina1 o datos.temp)' };
         if (timeout === null) return { error: 'El tiempo sin datos debe estar entre 0 y 86400 segundos' };
 
+        const resultado = validarEscala(b);
+
+        if (resultado.error) return resultado;
+
         return {
             datos: {
                 nombre,
@@ -119,12 +147,15 @@ function validar(body) {
                 funcion: null,
                 direccion: null,
                 formato: null,
+                bit_registro: null,
+                orden_palabras: null,
                 broker,
                 topico,
                 campo: campo || null,
                 intervalo_ms: 1000,
                 banda,
-                timeout_s: timeout
+                timeout_s: timeout,
+                ...resultado.datos
             }
         };
     }
@@ -179,12 +210,18 @@ module.exports = function montarMonitor(app, { requiereAdmin, requiereAdminPagin
                     funcion: v.funcion,
                     direccion: v.direccion,
                     formato: v.formato,
+                    bit_registro: v.bit_registro,
+                    orden_palabras: v.orden_palabras,
                     broker: v.broker,
                     topico: v.topico,
                     campo: v.campo,
                     intervalo_ms: v.intervalo_ms,
                     banda: v.banda,
                     timeout_s: v.timeout_s,
+                    factor: v.factor,
+                    desplazamiento: v.desplazamiento,
+                    decimales: v.decimales,
+                    unidad: v.unidad,
                     estado: v.activo ? (actual.estado || 'desconocido') : 'pausada',
                     valor: actual.valor === undefined ? null : actual.valor,
                     ultimo_dato: actual.ultimo_dato || null,

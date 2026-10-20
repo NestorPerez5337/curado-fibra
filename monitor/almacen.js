@@ -68,6 +68,27 @@ const lista = (async () => {
         )
     `);
 
+    // Columnas agregadas después de la primera versión (formatos, escala y
+    // unidad). CREATE TABLE no toca una tabla que ya existe, así que se agregan
+    // acá si faltan: una base vieja las recibe con los valores que dejan todo
+    // como estaba (factor 1, suma 0, sin unidad).
+    const existentes = (await todos(`PRAGMA table_info(variables)`)).map(c => c.name);
+
+    const COLUMNAS_NUEVAS = [
+        ['bit_registro', 'INTEGER'],
+        ['orden_palabras', 'TEXT'],
+        ['factor', 'REAL NOT NULL DEFAULT 1'],
+        ['desplazamiento', 'REAL NOT NULL DEFAULT 0'],
+        ['decimales', 'INTEGER'],
+        ['unidad', 'TEXT']
+    ];
+
+    for (const [nombre, definicion] of COLUMNAS_NUEVAS) {
+        if (!existentes.includes(nombre)) {
+            await ejecutar(`ALTER TABLE variables ADD COLUMN ${nombre} ${definicion}`);
+        }
+    }
+
     await ejecutar(`
         CREATE TABLE IF NOT EXISTS eventos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,9 +151,10 @@ lista.catch(err => console.error('Monitor: error creando las tablas:', err));
 // escribir desde afuera).
 const CAMPOS_CONFIG = [
     'nombre', 'tipo', 'activo',
-    'ip', 'puerto', 'unit_id', 'funcion', 'direccion', 'formato',
+    'ip', 'puerto', 'unit_id', 'funcion', 'direccion', 'formato', 'bit_registro', 'orden_palabras',
     'broker', 'topico', 'campo',
-    'intervalo_ms', 'banda', 'timeout_s'
+    'intervalo_ms', 'banda', 'timeout_s',
+    'factor', 'desplazamiento', 'decimales', 'unidad'
 ];
 
 function soloConfig(datos) {
