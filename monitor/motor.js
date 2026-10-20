@@ -13,6 +13,7 @@
 const net = require('net');
 const Modbus = require('jsmodbus');
 const mqtt = require('mqtt');
+const { registrosQueOcupa, valorModbus, valorMqtt, conUnidad } = require('./valores');
 
 // Lecturas fallidas seguidas para dar por caído a un equipo Modbus.
 const FALLOS_PARA_CAIDA = 2;
@@ -21,11 +22,12 @@ const TIMEOUT_PETICION_MS = 2000;
 const INTERVALO_MINIMO_MS = 200;
 const LARGO_MAXIMO_TEXTO = 200;
 
+// "cantidad" es cuántos registros se piden: 2 para los formatos de 32 bits.
 const LECTORES = {
     coil: (cliente, direccion) => cliente.readCoils(direccion, 1),
     discreta: (cliente, direccion) => cliente.readDiscreteInputs(direccion, 1),
-    holding: (cliente, direccion) => cliente.readHoldingRegisters(direccion, 1),
-    input: (cliente, direccion) => cliente.readInputRegisters(direccion, 1)
+    holding: (cliente, direccion, cantidad) => cliente.readHoldingRegisters(direccion, cantidad),
+    input: (cliente, direccion, cantidad) => cliente.readInputRegisters(direccion, cantidad)
 };
 
 const TIPO_EVENTO_FALLA = {
@@ -125,21 +127,13 @@ function cambiaSignificativamente(anterior, nuevo, banda) {
     return true;
 }
 
-function formatearValorModbus(cfg, respuesta) {
+// Las lecturas de coils y registros traen los datos en "values", pero la de
+// entradas discretas no tiene "values": sus bits vienen en "valuesAsArray".
+function valoresDeRespuesta(respuesta) {
 
-    const valor = respuesta.response.body.values[0];
+    const cuerpo = respuesta.response.body;
 
-    if (cfg.funcion === 'coil' || cfg.funcion === 'discreta') {
-        return valor ? 'ON' : 'OFF';
-    }
-
-    let numero = Number(valor);
-
-    if (cfg.formato === 'int16' && numero > 32767) {
-        numero -= 65536;
-    }
-
-    return String(numero);
+    return cuerpo.values || cuerpo.valuesAsArray;
 }
 
 function extraerValorMqtt(textoMensaje, campo) {
@@ -261,9 +255,11 @@ module.exports = function crearMotor(almacen) {
 
         rt.valorRegistrado = texto;
 
+        // El valor guardado y comparado va sin unidad (la banda necesita un
+        // número); en el registro de eventos se ve con su unidad.
         evento(rt, 'cambio', {
-            anterior,
-            nuevo: texto,
+            anterior: conUnidad(anterior, rt.cfg),
+            nuevo: conUnidad(texto, rt.cfg),
             detalle: anterior === null ? 'Valor inicial' : null
         });
     }
@@ -372,14 +368,31 @@ module.exports = function crearMotor(almacen) {
 
         try {
 
-            const respuesta = await LECTORES[rt.cfg.funcion](d.cliente, rt.cfg.direccion);
+            const cantidad = registrosQueOcupa(rt.cfg.formato);
+
+            const respuesta = await LECTORES[rt.cfg.funcion](d.cliente, rt.cfg.direccion, cantidad);
 
             // Si mientras se leía la borraron o la editaron, esta lectura ya no vale.
             if (variables.get(rt.cfg.id) !== rt) {
                 return;
             }
 
-            procesarValor(rt, formatearValorModbus(rt.cfg, respuesta));
+            let texto;
+
+            try {
+
+                texto = valorModbus(rt.cfg, valoresDeRespuesta(respuesta));
+
+            } catch (err) {
+
+                // El equipo contestó, pero lo que mandó no se puede interpretar con el
+                // formato elegido: es un problema de la variable, no de la conexión.
+                cambiarEstado(rt, 'error', err.message);
+
+                return;
+            }
+
+            procesarValor(rt, texto);
 
         } catch (err) {
 
@@ -581,7 +594,7 @@ module.exports = function crearMotor(almacen) {
 
                 try {
 
-                    procesarValor(rt, extraerValorMqtt(mensaje.toString(), rt.cfg.campo));
+                    procesarValor(rt, valorMqtt(extraerValorMqtt(mensaje.toString(), rt.cfg.campo), rt.cfg));
 
                 } catch (err) {
 
