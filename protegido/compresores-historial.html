@@ -68,6 +68,12 @@
     };
 })();
 
+// Todo lo que viene del servidor y se arma como HTML pasa por esc(): los
+// nombres los cargan los usuarios y no se pueden tratar como código.
+const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 async function cargarCompresores() {
     const res = await fetch('/api/compresores');
     if (!res.ok) return;
@@ -75,7 +81,7 @@ async function cargarCompresores() {
 
     const sel = document.getElementById('filtroCompresor');
     compresores.forEach(c => {
-        sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
+        sel.innerHTML += `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`;
     });
 }
 
@@ -110,10 +116,10 @@ async function buscar() {
     eventos.forEach(e => {
         tbody.innerHTML += `
         <tr>
-            <td>${e.fechaHora}</td>
-            <td>${e.compresor}</td>
+            <td>${esc(e.fechaHora)}</td>
+            <td>${esc(e.compresor)}</td>
             <td class="${e.tipo === 'encendido' ? 'tipo-encendido' : 'tipo-apagado'}">${e.tipo === 'encendido' ? '▶ Encendido' : '⏹ Apagado'}</td>
-            <td class="origen">${origenLegible(e.origen)}</td>
+            <td class="origen">${esc(origenLegible(e.origen))}</td>
         </tr>
         `;
     });

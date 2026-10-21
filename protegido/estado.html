@@ -659,7 +659,7 @@ function renderMonitor(e) {
     if (m.conProblema.length) {
 
         html += m.conProblema.map(v =>
-            dato(esc(v.nombre), `<span class="chip error">${esc(v.estado.replace('_', ' '))}</span>` +
+            dato(v.nombre, `<span class="chip error">${esc(v.estado.replace('_', ' '))}</span>` +
                 (v.desde ? ` <small>desde ${esc(v.desde)}</small>` : ''))
         ).join('');
     }
@@ -1062,7 +1062,7 @@ function armarOpcionesDeFiltros(r) {
 
     const llenar = (id, opciones) => {
         const elegida = $(id).value;
-        $(id).innerHTML = opciones.map(([valor, texto]) => '<option value="' + valor + '">' + esc(texto) + '</option>').join('');
+        $(id).innerHTML = opciones.map(([valor, texto]) => '<option value="' + esc(valor) + '">' + esc(texto) + '</option>').join('');
         $(id).value = elegida;
     };
 

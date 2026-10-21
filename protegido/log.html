@@ -83,6 +83,13 @@
     };
 })();
 
+// Todo lo que viene del servidor y se arma como HTML pasa por esc(): el usuario,
+// la acción y el detalle incluyen texto que escriben los usuarios (nombres de
+// recetas, de compresores, etc.) y no se puede tratar como código.
+const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 function detalleLegible(detalle) {
     if (!detalle) return '';
     try {
@@ -118,11 +125,11 @@ async function buscar() {
     eventos.forEach(e => {
         tbody.innerHTML += `
         <tr>
-            <td>${e.fechaHora}</td>
-            <td class="usuario">${e.usuario}</td>
-            <td><span class="modulo modulo-${e.modulo}">${e.modulo}</span></td>
-            <td>${e.accion}</td>
-            <td class="detalle">${detalleLegible(e.detalle)}</td>
+            <td>${esc(e.fechaHora)}</td>
+            <td class="usuario">${esc(e.usuario)}</td>
+            <td><span class="modulo modulo-${esc(e.modulo)}">${esc(e.modulo)}</span></td>
+            <td>${esc(e.accion)}</td>
+            <td class="detalle">${esc(detalleLegible(e.detalle))}</td>
         </tr>
         `;
     });

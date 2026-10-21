@@ -143,6 +143,12 @@
     };
 })();
 
+// Todo lo que viene del servidor y se arma como HTML pasa por esc(): los
+// nombres y los horarios los cargan los usuarios y no se pueden tratar como código.
+const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 let compresores = [];
 let excepcionesMes = [];
 let mesActual = new Date();
@@ -206,15 +212,15 @@ async function cargarCompresores() {
     compresores.forEach(c => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${c.nombre}</td>
-            <td id="estado-compresor-${c.id}">--</td>
-            <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
-            <td><input type="time" data-campo="horaEncendido" value="${c.horaEncendido || ''}"></td>
+            <td>${esc(c.nombre)}</td>
+            <td id="estado-compresor-${Number(c.id)}">--</td>
+            <td><input type="time" data-campo="horaApagado" value="${esc(c.horaApagado || '')}"></td>
+            <td><input type="time" data-campo="horaEncendido" value="${esc(c.horaEncendido || '')}"></td>
             <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
             <td>
-                <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar horario</button>
-                <button class="btn-on" onclick="marcarEvento(${c.id}, 'encendido', this)">▶ Encender ahora</button>
-                <button class="btn-off" onclick="marcarEvento(${c.id}, 'apagado', this)">⏹ Apagar ahora</button>
+                <button class="btn-guardar" onclick="guardarCompresor(${Number(c.id)}, this)">Guardar horario</button>
+                <button class="btn-on" onclick="marcarEvento(${Number(c.id)}, 'encendido', this)">▶ Encender ahora</button>
+                <button class="btn-off" onclick="marcarEvento(${Number(c.id)}, 'apagado', this)">⏹ Apagar ahora</button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -261,7 +267,7 @@ function actualizarSelectCompresores() {
     }
 
     compresores.forEach(c => {
-        sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
+        sel.innerHTML += `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`;
     });
 
     if (actual && compresores.some(c => String(c.id) === actual)) {
@@ -385,7 +391,7 @@ function dibujarCalendario() {
 
         const div = document.createElement('div');
         div.className = 'cal-dia' + (exc ? ' con-excepcion' : '') + (fechaStr === fechaSeleccionada ? ' seleccionado' : '');
-        div.innerHTML = `<span class="num">${dia}</span>${exc ? `<span class="marca">⏹ ${exc.horaApagado || '--'} / ▶ ${exc.horaEncendido || '--'}</span>` : ''}`;
+        div.innerHTML = `<span class="num">${dia}</span>${exc ? `<span class="marca">⏹ ${esc(exc.horaApagado || '--')} / ▶ ${esc(exc.horaEncendido || '--')}</span>` : ''}`;
         div.onclick = () => seleccionarDia(fechaStr, exc);
 
         grid.appendChild(div);

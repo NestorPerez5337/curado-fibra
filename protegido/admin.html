@@ -194,6 +194,17 @@
 
 let yoUsuarioId = null;
 
+// Todo lo que viene del servidor y se arma como HTML pasa por esc(): los
+// nombres los escriben los usuarios y no se pueden tratar como código.
+const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// Nombre de cada fila por id, para los avisos de "¿Eliminar...?" (así los
+// botones solo llevan el id y no un texto adentro del atributo onclick).
+const nombresUsuarios = new Map();
+const nombresCompresores = new Map();
+
 async function cargarYo() {
     const res = await fetch('/api/me');
     if (res.ok) {
@@ -216,12 +227,16 @@ async function cargarUsuarios() {
     const tbody = document.getElementById('tabla-usuarios');
     tbody.innerHTML = '';
 
+    nombresUsuarios.clear();
+
     usuarios.forEach(u => {
+
+        nombresUsuarios.set(u.id, u.usuario);
 
         const tr = document.createElement('tr');
 
         tr.innerHTML = `
-            <td>${u.usuario}${u.id === yoUsuarioId ? ' (vos)' : ''}</td>
+            <td>${esc(u.usuario)}${u.id === yoUsuarioId ? ' (vos)' : ''}</td>
             <td><input type="checkbox" data-campo="esAdmin" ${u.esAdmin ? 'checked' : ''}></td>
             <td><input type="checkbox" data-campo="devanadoras" ${u.permisos.devanadoras ? 'checked' : ''}></td>
             <td><input type="checkbox" data-campo="horometros" ${u.permisos.horometros ? 'checked' : ''}></td>
@@ -230,8 +245,8 @@ async function cargarUsuarios() {
             <td><input type="checkbox" data-campo="energia" ${u.permisos.energia ? 'checked' : ''}></td>
             <td><input type="text" class="mini" placeholder="(sin cambios)" data-campo="pass"></td>
             <td>
-                <button class="btn-guardar" onclick="guardarUsuario(${u.id}, this)">Guardar</button>
-                <button class="btn-eliminar" onclick="eliminarUsuario(${u.id}, '${u.usuario}')">Eliminar</button>
+                <button class="btn-guardar" onclick="guardarUsuario(${Number(u.id)}, this)">Guardar</button>
+                <button class="btn-eliminar" onclick="eliminarUsuario(${Number(u.id)})">Eliminar</button>
             </td>
         `;
 
@@ -338,7 +353,9 @@ async function guardarUsuario(id, boton) {
     tr.querySelector('[data-campo="pass"]').value = '';
 }
 
-async function eliminarUsuario(id, usuario) {
+async function eliminarUsuario(id) {
+
+    const usuario = nombresUsuarios.has(id) ? nombresUsuarios.get(id) : `id ${id}`;
 
     if (!confirm(`¿Eliminar el usuario "${usuario}"? Esta acción no se puede deshacer.`)) {
         return;
@@ -411,22 +428,26 @@ async function cargarCompresores() {
         return;
     }
 
+    nombresCompresores.clear();
+
     compresores.forEach(c => {
+        nombresCompresores.set(c.id, c.nombre);
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><input type="text" class="mini" style="width:130px;" data-campo="nombre" value="${c.nombre}"></td>
-            <td><input type="text" class="mini" style="width:110px;" data-campo="ip" value="${c.ip || ''}" placeholder="(sin definir)"></td>
-            <td><input type="number" class="mini" style="width:70px;" data-campo="puerto" value="${c.puerto || 502}"></td>
-            <td><input type="text" class="mini" style="width:90px;" data-campo="marca" value="${c.marca || ''}" placeholder="(sin definir)"></td>
-            <td><input type="number" class="mini" style="width:70px;" data-campo="coilMarcha" value="${c.coilMarcha ?? ''}" placeholder="(sin definir)"></td>
-            <td><input type="number" class="mini" style="width:70px;" data-campo="coilEstado" value="${c.coilEstado ?? ''}" placeholder="(sin definir)"></td>
-            <td id="estado-compresor-${c.id}">--</td>
-            <td><input type="time" data-campo="horaApagado" value="${c.horaApagado || ''}"></td>
-            <td><input type="time" data-campo="horaEncendido" value="${c.horaEncendido || ''}"></td>
+            <td><input type="text" class="mini" style="width:130px;" data-campo="nombre" value="${esc(c.nombre)}"></td>
+            <td><input type="text" class="mini" style="width:110px;" data-campo="ip" value="${esc(c.ip || '')}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="puerto" value="${esc(c.puerto || 502)}"></td>
+            <td><input type="text" class="mini" style="width:90px;" data-campo="marca" value="${esc(c.marca || '')}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="coilMarcha" value="${esc(c.coilMarcha ?? '')}" placeholder="(sin definir)"></td>
+            <td><input type="number" class="mini" style="width:70px;" data-campo="coilEstado" value="${esc(c.coilEstado ?? '')}" placeholder="(sin definir)"></td>
+            <td id="estado-compresor-${Number(c.id)}">--</td>
+            <td><input type="time" data-campo="horaApagado" value="${esc(c.horaApagado || '')}"></td>
+            <td><input type="time" data-campo="horaEncendido" value="${esc(c.horaEncendido || '')}"></td>
             <td style="text-align:center;"><input type="checkbox" data-campo="activo" ${c.activo ? 'checked' : ''}></td>
             <td>
-                <button class="btn-guardar" onclick="guardarCompresor(${c.id}, this)">Guardar</button>
-                <button class="btn-eliminar" onclick="eliminarCompresor(${c.id}, '${c.nombre}')">Eliminar</button>
+                <button class="btn-guardar" onclick="guardarCompresor(${Number(c.id)}, this)">Guardar</button>
+                <button class="btn-eliminar" onclick="eliminarCompresor(${Number(c.id)})">Eliminar</button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -535,7 +556,9 @@ async function guardarCompresor(id, boton) {
     }
 }
 
-async function eliminarCompresor(id, nombre) {
+async function eliminarCompresor(id) {
+    const nombre = nombresCompresores.has(id) ? nombresCompresores.get(id) : `id ${id}`;
+
     if (!confirm(`¿Eliminar el compresor "${nombre}" y todo su historial/excepciones?`)) return;
 
     const res = await fetch(`/api/compresores/${id}`, { method: 'DELETE' });
@@ -573,10 +596,10 @@ async function cargarBackups() {
     backups.forEach(b => {
         tbody.innerHTML += `
             <tr>
-                <td>${b.archivo}</td>
-                <td>${b.fecha}</td>
-                <td>${b.tamanioKb} KB</td>
-                <td><a href="/api/backups/${b.archivo}" style="color:#00bfff;">Descargar</a></td>
+                <td>${esc(b.archivo)}</td>
+                <td>${esc(b.fecha)}</td>
+                <td>${esc(b.tamanioKb)} KB</td>
+                <td><a href="/api/backups/${encodeURIComponent(b.archivo)}" style="color:#00bfff;">Descargar</a></td>
             </tr>
         `;
     });

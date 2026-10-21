@@ -88,6 +88,13 @@
             cargarMaquinas();
         });
 
+        // Todo lo que viene del servidor y se arma como HTML pasa por esc(): los
+        // nombres de las máquinas son las claves de los mensajes MQTT, que no
+        // controla este programa, y no se pueden tratar como código.
+        const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
         async function cargarMaquinas() {
             try {
                 const res = await fetch('/api/horometros/maquinas');
@@ -103,7 +110,7 @@
                 maquinas.forEach(m => {
                     contenedor.innerHTML += `
                         <label>
-                            <input type="checkbox" name="maquinas" value="${m}" checked> ${m}
+                            <input type="checkbox" name="maquinas" value="${esc(m)}" checked> ${esc(m)}
                         </label>
                     `;
                 });
@@ -128,7 +135,7 @@
 
             try {
                 // 2. Consultar datos a la API
-                const url = `/api/horometros/datos?maquinas=${maquinasSeleccionadas.join(',')}&desde=${desde}&hasta=${hasta}`;
+                const url = `/api/horometros/datos?maquinas=${maquinasSeleccionadas.map(encodeURIComponent).join(',')}&desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`;
                 const res = await fetch(url);
 
                 if (!res.ok) {
