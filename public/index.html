@@ -144,6 +144,13 @@
 
         let devA, canA, recetas = [];
 
+        // Todo lo que viene del servidor y se arma como HTML pasa por esc(): los
+        // nombres de las recetas los escriben los usuarios y no se pueden tratar
+        // como código.
+        const esc = valor => String(valor === null || valor === undefined ? '' : valor)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
         for(let d=1; d<=6; d++) {
             for(let c=1; c<=2; c++) {
                 document.getElementById('container').innerHTML += `<button class="btn-dev" onclick="abrir(${d},${c})">DEV ${d} | CANAL ${c}</button>`;
@@ -381,7 +388,7 @@
             const r = await fetch('/api/recetas'); recetas = await r.json();
             const sel = document.getElementById('sel-rec');
             sel.innerHTML = '<option value="">-- Cargar Receta --</option>';
-            recetas.forEach(x => sel.innerHTML += `<option value="${x.id}">${x.nombre}</option>`);
+            recetas.forEach(x => sel.innerHTML += `<option value="${Number(x.id)}">${esc(x.nombre)}</option>`);
         }
 
         async function refrescar() {
@@ -521,8 +528,8 @@
     recetas.forEach(x => {
 
         sel.innerHTML +=
-            `<option value="${x.id}">
-                ${x.nombre}
+            `<option value="${Number(x.id)}">
+                ${esc(x.nombre)}
              </option>`;
     });
 
