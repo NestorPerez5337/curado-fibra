@@ -22,6 +22,14 @@ function normalizarCano2(valor) {
     return v && v !== '0' ? v : null;
 }
 
+// Node-RED graba la unidad como venga del PLC ("Mpa", "psi"...): se muestra
+// siempre igual. Si no hay unidad, PSI.
+const UNIDADES = { psi: 'PSI', mpa: 'MPa', kpa: 'kPa', bar: 'bar' };
+function normalizarUnidad(valor) {
+    const v = (valor || '').trim();
+    return UNIDADES[v.toLowerCase()] || v || 'PSI';
+}
+
 async function listarOps(maquina) {
 
     const pool = await obtenerPool();
@@ -124,7 +132,7 @@ async function obtenerEnsayo(maquina, id) {
         cano2: normalizarCano2(m.cano2),
         min,
         max,
-        unidad: (m.unidad || 'PSI').trim(),
+        unidad: normalizarUnidad(m.unidad),
         puntos,
         resumen: calcularResumen(puntos, min)
     };
