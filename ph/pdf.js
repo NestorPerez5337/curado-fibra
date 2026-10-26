@@ -67,7 +67,7 @@ async function generarPdfEnsayo(ensayos, usuario) {
     const ancho = doc.page.width - 72;
     const r = ensayo.resumen;
     const u = ensayo.unidad;
-    const num = v => (v === null || v === undefined) ? '—' : String(Math.round(v));
+    const num = v => GraficoPH.presion(v, u);   // decimales según la unidad (PSI 0, MPa 1)
     const mmss = GraficoPH.mmss;
     // Caño 0 = el PLC dejó ensayar sin número de caño.
     const canos = ensayo.cano2 ? `${ensayo.cano} y ${ensayo.cano2}`

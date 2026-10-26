@@ -8,7 +8,8 @@
 <script src="/ph-assets/hammer.min.js"></script>
 <script src="/ph-assets/chartjs-plugin-zoom.min.js"></script>
 <script src="/ph-assets/chartjs-plugin-annotation.min.js"></script>
-<script src="/ph-assets/grafico.js"></script>
+<!-- ?v= : cambiarlo cada vez que cambia grafico.js (se cachea 1 día en el navegador) -->
+<script src="/ph-assets/grafico.js?v=2026-10-26"></script>
 <link rel="stylesheet" href="/ph-assets/flatpickr-dark.css">
 <script src="/ph-assets/flatpickr.min.js"></script>
 <script src="/ph-assets/flatpickr-es.js"></script>
@@ -161,7 +162,6 @@ function opcion(valor, texto) {
 
 const diaMesHora = t => `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)}`;
 const fechaLarga = t => `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)}`;
-const num = v => v === null || v === undefined ? '—' : String(Math.round(v));
 // El PLC a veces deja ensayar sin número de caño: queda grabado como 0.
 const textoCano = c => c === '0' ? '0 (sin número)' : c;
 
@@ -243,14 +243,15 @@ async function obtenerEnsayo(id) {
 
 function pintarTarjetas(e) {
   const r = e.resumen, u = e.unidad;
+  const p = v => GraficoPH.presion(v, u);   // decimales según la unidad (PSI 0, MPa 1)
   const t = [
     ['OP', e.op],
     [e.cano2 ? 'Caños' : 'Caño', e.cano2 ? `${e.cano} y ${e.cano2}` : textoCano(e.cano)],
-    ['Presión mín / máx', `${num(e.min)} / ${num(e.max)} ${u}`],
+    ['Presión mín / máx', `${p(e.min)} / ${p(e.max)} ${u}`],
     ['Fecha', r ? fechaLarga(r.inicio) : fechaLarga(e.fechaEnsayo)],
     ['Inicio – fin', r ? `${r.inicio.slice(11, 19)} – ${r.fin.slice(11, 19)}` : '—'],
     ['Duración', r ? GraficoPH.mmss(r.duracionSeg) : '—'],
-    ['Pico alcanzado', r ? [`${num(r.pico.p)} ${u}`, r.pico.t.slice(11, 19)] : '—'],
+    ['Pico alcanzado', r ? [`${p(r.pico.p)} ${u}`, r.pico.t.slice(11, 19)] : '—'],
     ['Tiempo ≥ mínima', r && r.segSobreMin !== null ? GraficoPH.mmss(r.segSobreMin) : '—'],
   ];
   $('tarjetas').innerHTML = '';

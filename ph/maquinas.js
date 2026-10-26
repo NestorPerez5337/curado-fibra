@@ -20,6 +20,7 @@
 
 const MAQUINAS = {
     ph9: { nombre: 'PH9', maestro: 'ph9_maestro', detalle: 'ph9_detalle', tieneCano2: true },
+    phcorta: { nombre: 'PH Corta', maestro: 'PHCorta_Maestro', detalle: 'PHCorta_Detalle', tieneCano2: false },
 };
 
 function obtenerMaquina(clave) {

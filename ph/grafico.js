@@ -57,8 +57,21 @@
         return t.slice(8, 10) + '/' + t.slice(5, 7);
     }
 
-    function presion(v) {
-        return String(Math.round(v));
+    // PSI sin decimales (miles de PSI); MPa, bar, etc. con un decimal
+    // (la PH Corta trabaja con 14,5 / 16,5 MPa).
+    function presion(v, unidad) {
+        if (v === null || v === undefined) return '—';
+        const decimales = /^psi$/i.test(unidad || 'PSI') ? 0 : 1;
+        return Number(v).toFixed(decimales).replace('.', ',');
+    }
+
+    // Tope del eje Y: un 8 % sobre el valor más alto, redondeado a un cuarto
+    // de su orden de magnitud (4.657 PSI -> 4.750; 22,6 MPa -> 25).
+    function techoEje(techo) {
+        if (!techo) return undefined;
+        const v = techo * 1.08;
+        const paso = Math.pow(10, Math.floor(Math.log10(v))) / 4;
+        return Math.ceil(v / paso) * paso;
     }
 
     function etiquetaEnsayo(e) {
@@ -114,13 +127,21 @@
             type: 'line', yMin: valor, yMax: valor,
             borderColor: color, borderWidth: 1.5, borderDash: [6, 4],
             label: {
-                display: true, content: `${texto} ${presion(valor)} ${unidad}`, position: 'start',
+                display: true, content: `${texto} ${presion(valor, unidad)} ${unidad}`, position: 'start',
                 backgroundColor: color, color: '#111', font: fuente(11, 'bold')
             }
         });
 
         if (max !== null) anotaciones.max = lineaLimite(max, tema.max, 'Máx');
         if (min !== null) anotaciones.min = lineaLimite(min, tema.min, 'Mín');
+
+        const techo = Math.max(max || 0, ...ensayos.map(e => e.resumen ? e.resumen.pico.p : 0));
+
+        // Mín y Máx muy juntas (ej. 14,5 / 16,5 MPa sobre un eje de 25):
+        // la etiqueta de Máx va a la derecha para que no se pisen.
+        if (anotaciones.max && anotaciones.min && techo && (max - min) / techo < 0.12) {
+            anotaciones.max.label.position = 'end';
+        }
 
         const r = principal.resumen;
 
@@ -135,7 +156,7 @@
 
             anotaciones.picoTexto = {
                 type: 'label', xValue: xPico, yValue: r.pico.p, yAdjust: -24 * f,
-                content: `Pico ${presion(r.pico.p)} ${unidad}`,
+                content: `Pico ${presion(r.pico.p, unidad)} ${unidad}`,
                 color: tema.etiquetaTexto, backgroundColor: tema.etiquetaFondo,
                 font: fuente(12, 'bold'), padding: 5
             };
@@ -154,7 +175,6 @@
         }
 
         const duracion = Math.max(0, ...datasets.map(d => d.data.length ? d.data[d.data.length - 1].x : 0));
-        const techo =Math.max(max || 0, ...ensayos.map(e => e.resumen ? e.resumen.pico.p : 0));
 
         return {
             type: 'line',
@@ -176,9 +196,9 @@
                     },
                     y: {
                         min: 0,
-                        suggestedMax: techo ? Math.ceil(techo * 1.08 / 250) * 250 : undefined,
+                        suggestedMax: techoEje(techo),
                         title: { display: true, text: `Presión (${unidad})`, color: tema.texto },
-                        ticks: { color: tema.texto, callback: v => String(v) },
+                        ticks: { color: tema.texto, callback: v => String(v).replace('.', ',') },
                         grid: { color: tema.grilla }
                     }
                 },
@@ -187,7 +207,7 @@
                     tooltip: {
                         callbacks: {
                             title: items => items.length ? formatoX(items[0].parsed.x) : '',
-                            label: c => ` ${c.dataset.label.split(' (')[0]}: ${presion(c.parsed.y)} ${unidad}`
+                            label: c => ` ${c.dataset.label.split(' (')[0]}: ${presion(c.parsed.y, unidad)} ${unidad}`
                         }
                     },
                     annotation: { annotations: anotaciones }
@@ -196,5 +216,5 @@
         };
     }
 
-    return { construir, mmss, segundos, TEMAS };
+    return { construir, mmss, segundos, presion, TEMAS };
 });
