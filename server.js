@@ -539,16 +539,22 @@ function hashearPassword(password) {
     return { salt, hash };
 }
 
-function verificarPassword(password, salt, hash) {
+// scrypt en el pool de hilos de Node (con los mismos parámetros que scryptSync,
+// así los hashes ya guardados siguen sirviendo). La versión síncrona frenaba
+// todo el servidor ~30 ms por cada intento de login.
+const scryptAsync = (password, salt) => new Promise((resolver, rechazar) => {
+    crypto.scrypt(password, salt, 64, (err, clave) => err ? rechazar(err) : resolver(clave));
+});
+
+async function verificarPassword(password, salt, hash) {
 
     try {
 
-        const hashIntentado =
-            crypto.scryptSync(password, salt, 64).toString('hex');
+        const hashIntentado = await scryptAsync(password, salt);
 
         return crypto.timingSafeEqual(
             Buffer.from(hash, 'hex'),
-            Buffer.from(hashIntentado, 'hex')
+            hashIntentado
         );
 
     } catch {
@@ -703,29 +709,201 @@ const requiereAdminPagina = paginaProtegida(requiereAdmin);
 // LOGIN
 // ======================================================
 
-app.post('/api/login', (req, res) => {
+// ---- Límite de intentos fallidos
+// Tres contadores independientes, cada uno con su tope dentro de LOGIN_VENTANA_MS;
+// al llegar al tope se bloquea por LOGIN_BLOQUEO_MS (aunque después se escriba la
+// contraseña correcta, si no, el bloqueo no frenaría a nadie):
+//   usuario + dirección  5   el caso común: alguien que se equivoca o prueba claves
+//   usuario              25  desde cualquier dirección. Existe porque el programa se publica
+//                            directo (sin proxy) y la dirección IP se puede falsear con
+//                            X-Forwarded-For, así que el tope por dirección solo se esquiva.
+//   dirección            30  alguien que prueba muchos usuarios distintos
+// Los pedidos bloqueados no suman, así que el bloqueo no se alarga solo.
+const LOGIN_VENTANA_MS = 10 * 60 * 1000;
+const LOGIN_BLOQUEO_MS = 10 * 60 * 1000;
+const LOGIN_MAX_USUARIO_Y_DIRECCION = 5;
+const LOGIN_MAX_USUARIO = 25;
+const LOGIN_MAX_DIRECCION = 30;
 
-    const { user, pass } = req.body;
+// scrypt corre en el pool de hilos de Node (4 por defecto), que comparte con la
+// base de datos y los archivos. Con todos los hilos ocupados verificando
+// contraseñas, el resto del programa esperaría; este tope deja libre al menos uno.
+const LOGIN_SIMULTANEOS_MAX = 3;
+let loginsEnCurso = 0;
 
-    db.get(
-        `SELECT * FROM usuarios WHERE usuario = ?`,
-        [user],
-        (err, fila) => {
+const LOGIN_LARGO_MAX_USUARIO = 100;
 
-            if (err) {
-                console.error(err);
-                return res.status(500).send('Error');
-            }
+// Para un usuario que no existe se hace igual la cuenta de scrypt contra un
+// hash falso: sin esto, el login tardaba ~1 ms con un usuario inexistente y ~30 ms
+// con uno real, y esa diferencia delata qué usuarios existen.
+const SALT_FALSA = '00'.repeat(16);
+const HASH_FALSO = '00'.repeat(64);
 
-            if (!fila || !verificarPassword(pass || '', fila.salt, fila.hash)) {
-                return res.status(401).send('Error');
-            }
+const intentosFallidosLogin = new Map();   // clave -> { cuenta, desde, bloqueadoHasta }
+const LOGIN_MAX_CLAVES = 20000;
 
-            req.session.usuarioId = fila.id;
+function clavesDeLogin(direccion, usuario) {
 
-            res.json({ status: 'ok' });
+    const nombre = usuario.trim().toLowerCase();
+
+    return [
+        { clave: `par|${direccion}|${nombre}`, max: LOGIN_MAX_USUARIO_Y_DIRECCION, quien: `con el usuario «${nombre}» desde ${direccion}` },
+        { clave: `usuario|${nombre}`, max: LOGIN_MAX_USUARIO, quien: `con el usuario «${nombre}» (desde varias direcciones)` },
+        { clave: `direccion|${direccion}`, max: LOGIN_MAX_DIRECCION, quien: `desde ${direccion} (con varios usuarios)` }
+    ];
+}
+
+// Minutos que faltan para que se libere el bloqueo (0 si no hay ninguno)
+function minutosDeBloqueoLogin(claves) {
+
+    const ahora = Date.now();
+
+    let hasta = 0;
+
+    for (const { clave } of claves) {
+
+        const e = intentosFallidosLogin.get(clave);
+
+        if (e && e.bloqueadoHasta > ahora && e.bloqueadoHasta > hasta) {
+            hasta = e.bloqueadoHasta;
         }
-    );
+    }
+
+    return hasta ? Math.ceil((hasta - ahora) / 60000) : 0;
+}
+
+function registrarFalloLogin(claves) {
+
+    const ahora = Date.now();
+
+    for (const { clave, max, quien } of claves) {
+
+        let e = intentosFallidosLogin.get(clave);
+
+        if (!e || ahora - e.desde > LOGIN_VENTANA_MS) {
+
+            e = { cuenta: 0, desde: ahora, bloqueadoHasta: 0 };
+
+            intentosFallidosLogin.set(clave, e);
+
+            if (intentosFallidosLogin.size > LOGIN_MAX_CLAVES) {
+                intentosFallidosLogin.delete(intentosFallidosLogin.keys().next().value);
+            }
+        }
+
+        e.cuenta++;
+
+        if (e.cuenta >= max && e.bloqueadoHasta <= ahora) {
+
+            e.bloqueadoHasta = ahora + LOGIN_BLOQUEO_MS;
+
+            console.warn(
+                `Login: demasiados intentos fallidos ${quien}: se bloqueó por ${LOGIN_BLOQUEO_MS / 60000} minutos.`
+            );
+        }
+    }
+}
+
+// Cuando un administrador le cambia la contraseña a alguien, se le levantan los
+// bloqueos: lo típico es un operador que la olvidó, se bloqueó probando y ahora
+// tiene la nueva.
+function levantarBloqueosDeLogin(usuario) {
+
+    const nombre = String(usuario).trim().toLowerCase();
+
+    for (const clave of [...intentosFallidosLogin.keys()]) {
+
+        if (clave === `usuario|${nombre}` || (clave.startsWith('par|') && clave.endsWith(`|${nombre}`))) {
+            intentosFallidosLogin.delete(clave);
+        }
+    }
+}
+
+setInterval(() => {
+
+    const ahora = Date.now();
+
+    for (const [clave, e] of intentosFallidosLogin) {
+
+        if (e.bloqueadoHasta <= ahora && ahora - e.desde > LOGIN_VENTANA_MS) {
+            intentosFallidosLogin.delete(clave);
+        }
+    }
+
+}, 5 * 60 * 1000);
+
+const buscarUsuarioPorNombre = (usuario) => new Promise((resolver, rechazar) => {
+    db.get(`SELECT * FROM usuarios WHERE usuario = ?`, [usuario], (err, fila) => err ? rechazar(err) : resolver(fila));
+});
+
+app.post('/api/login', async (req, res) => {
+
+    const { user, pass } = req.body || {};
+
+    if (typeof user !== 'string' || typeof pass !== 'string' || user.length > LOGIN_LARGO_MAX_USUARIO) {
+        return res.status(401).send('Error');
+    }
+
+    const claves = clavesDeLogin(req.ip, user);
+
+    const bloqueo = minutosDeBloqueoLogin(claves);
+
+    if (bloqueo) {
+        res.set('Retry-After', String(bloqueo * 60));
+        return res.status(429).type('text/plain').send(
+            `Demasiados intentos fallidos. Esperá ${bloqueo} minuto${bloqueo === 1 ? '' : 's'} e intentá de nuevo.`
+        );
+    }
+
+    if (loginsEnCurso >= LOGIN_SIMULTANEOS_MAX) {
+        return res.status(503).type('text/plain').send(
+            'El servidor está procesando otros inicios de sesión. Probá de nuevo en unos segundos.'
+        );
+    }
+
+    loginsEnCurso++;
+
+    try {
+
+        const fila = await buscarUsuarioPorNombre(user);
+
+        const correcta = fila
+            ? await verificarPassword(pass, fila.salt, fila.hash)
+            : await verificarPassword(pass, SALT_FALSA, HASH_FALSO);
+
+        if (!fila || !correcta) {
+
+            registrarFalloLogin(claves);
+
+            const bloqueoNuevo = minutosDeBloqueoLogin(claves);
+
+            if (bloqueoNuevo) {
+                res.set('Retry-After', String(bloqueoNuevo * 60));
+                return res.status(429).type('text/plain').send(
+                    `Demasiados intentos fallidos. Esperá ${bloqueoNuevo} minuto${bloqueoNuevo === 1 ? '' : 's'} e intentá de nuevo.`
+                );
+            }
+
+            return res.status(401).send('Error');
+        }
+
+        // Entró bien: se borra solo el contador de este usuario en esta dirección
+        intentosFallidosLogin.delete(claves[0].clave);
+
+        req.session.usuarioId = fila.id;
+
+        res.json({ status: 'ok' });
+
+    } catch (err) {
+
+        console.error(err);
+
+        res.status(500).send('Error');
+
+    } finally {
+
+        loginsEnCurso--;
+    }
 });
 
 app.post('/api/logout', (req, res) => {
@@ -776,9 +954,9 @@ app.get('/api/usuarios', requiereAdmin, (req, res) => {
 
 app.post('/api/usuarios', requiereAdmin, (req, res) => {
 
-    const { usuario, pass, esAdmin, permisos } = req.body;
+    const { usuario, pass, esAdmin, permisos } = req.body || {};
 
-    if (!usuario || !pass) {
+    if (!usuario || !pass || typeof usuario !== 'string' || typeof pass !== 'string') {
         return res.status(400).send('Usuario y contraseña son obligatorios');
     }
 
@@ -823,8 +1001,12 @@ app.post('/api/usuarios', requiereAdmin, (req, res) => {
 
 app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
 
-    const { pass, esAdmin, permisos } = req.body;
+    const { pass, esAdmin, permisos } = req.body || {};
     const id = req.params.id;
+
+    if (pass !== undefined && pass !== null && typeof pass !== 'string') {
+        return res.status(400).send('La contraseña no es válida');
+    }
 
     const aplicarCampos = (nombreUsuario, salt, hash) => {
 
@@ -851,16 +1033,31 @@ app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
             valores.push(salt, hash);
         }
 
-        valores.push(id);
+        valores.push(id, esAdmin ? 1 : 0);
 
+        // La guarda "tiene que quedar al menos un administrador" va DENTRO de la
+        // misma sentencia que modifica: si se chequeara antes en otra consulta,
+        // dos administradores quitándose el permiso a la vez pasarían los dos el
+        // chequeo y el sistema quedaría sin ninguno. Si la guarda frena el
+        // cambio, no se modifica nada (tampoco la contraseña).
         db.run(
-            `UPDATE usuarios SET ${campos.join(', ')} WHERE id = ?`,
+            `UPDATE usuarios SET ${campos.join(', ')}
+             WHERE id = ?
+               AND (? = 1 OR es_admin = 0 OR (SELECT COUNT(*) FROM usuarios WHERE es_admin = 1) > 1)`,
             valores,
-            err => {
+            function (err) {
 
                 if (err) {
                     console.error(err);
                     return res.status(500).send('Error');
+                }
+
+                if (this.changes === 0) {
+                    return res.status(400).send('No se puede quitar el permiso de administrador al último administrador');
+                }
+
+                if (salt && hash) {
+                    levantarBloqueosDeLogin(nombreUsuario);
                 }
 
                 registrarLog(req, 'usuarios', `Editó el usuario "${nombreUsuario}"`, {
@@ -876,7 +1073,18 @@ app.put('/api/usuarios/:id', requiereAdmin, (req, res) => {
 
     db.get(`SELECT usuario FROM usuarios WHERE id = ?`, [id], (errNombre, filaNombre) => {
 
-        const nombreUsuario = filaNombre ? filaNombre.usuario : `id ${id}`;
+        if (errNombre) {
+            console.error(errNombre);
+            return res.status(500).send('Error');
+        }
+
+        // Antes un id que no existe respondía "ok" y dejaba "Editó el usuario id X"
+        // en el Registro de Cambios sin haber cambiado nada.
+        if (!filaNombre) {
+            return res.status(404).send('No existe');
+        }
+
+        const nombreUsuario = filaNombre.usuario;
 
         if (pass) {
 
@@ -909,45 +1117,28 @@ app.delete('/api/usuarios/:id', requiereAdmin, (req, res) => {
                 return res.status(404).send('No existe');
             }
 
-            const eliminar = () => {
+            // Evitamos quedarnos sin administradores. La guarda va dentro de la
+            // misma sentencia que borra (ver el PUT): con un chequeo aparte, dos
+            // administradores borrándose entre sí a la vez dejaban el sistema vacío.
+            db.run(
+                `DELETE FROM usuarios
+                 WHERE id = ?
+                   AND (es_admin = 0 OR (SELECT COUNT(*) FROM usuarios WHERE es_admin = 1) > 1)`,
+                [id],
+                function (err2) {
 
-                db.run(
-                    `DELETE FROM usuarios WHERE id = ?`,
-                    [id],
-                    err2 => {
-
-                        if (err2) {
-                            console.error(err2);
-                            return res.status(500).send('Error');
-                        }
-
-                        registrarLog(req, 'usuarios', `Eliminó el usuario "${fila.usuario}"`);
-
-                        res.json({ status: 'ok' });
-                    }
-                );
-            };
-
-            if (!fila.es_admin) {
-                return eliminar();
-            }
-
-            // Evitamos quedarnos sin administradores
-            db.get(
-                `SELECT COUNT(*) AS total FROM usuarios WHERE es_admin = 1`,
-                [],
-                (err3, row) => {
-
-                    if (err3) {
-                        console.error(err3);
+                    if (err2) {
+                        console.error(err2);
                         return res.status(500).send('Error');
                     }
 
-                    if (row.total <= 1) {
+                    if (this.changes === 0) {
                         return res.status(400).send('No se puede eliminar al último administrador');
                     }
 
-                    eliminar();
+                    registrarLog(req, 'usuarios', `Eliminó el usuario "${fila.usuario}"`);
+
+                    res.json({ status: 'ok' });
                 }
             );
         }

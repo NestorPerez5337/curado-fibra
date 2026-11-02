@@ -186,7 +186,12 @@
             const msg = document.getElementById('msg-login');
             msg.innerText = '';
             const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user:document.getElementById('u').value, pass:document.getElementById('p').value}) });
-            if(!res.ok) { msg.innerText = 'Usuario o contraseña incorrectos'; return; }
+            if(!res.ok) {
+                // 429: demasiados intentos fallidos (bloqueo temporal); 503: el servidor está
+                // verificando otros inicios de sesión. En ambos casos el servidor explica qué hacer.
+                msg.innerText = (res.status === 429 || res.status === 503) ? await res.text() : 'Usuario o contraseña incorrectos';
+                return;
+            }
 
             const rMe = await fetch('/api/me');
             yo = await rMe.json();
