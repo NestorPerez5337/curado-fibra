@@ -1705,47 +1705,190 @@ async function leerEstadoCompresor(compresor) {
 // COMPRESORES: PROGRAMADOR AUTOMÁTICO (apagado y encendido)
 // ======================================================
 
+// Un horario programado se puede cumplir hasta estos minutos DESPUÉS de su
+// hora. Sirve para tres cosas: si el PLC del compresor no responde justo a esa
+// hora, se vuelve a intentar cada minuto; si el programa se estaba reiniciando
+// (por ejemplo por una actualización), la orden sale apenas vuelve; y si el
+// reloj del programador se saltea un minuto, no se pierde la orden. Pasada la
+// ventana ya no se manda: una orden de las 18:00 no debe apagar un compresor
+// que alguien prendió a mano a las 19:00.
+const VENTANA_ORDEN_PROGRAMADA_MIN = 10;
+
+// Día (AAAA-MM-DD, hora local) en que ya quedó resuelto el apagado o el
+// encendido programado de cada compresor: o se cumplió, o no hay nada más para
+// reintentar ese día.
 const ultimoApagadoPorCompresor = {};
 const ultimoEncendidoPorCompresor = {};
 
-async function ejecutarApagadoCompresor(compresor) {
+// Órdenes programadas que se están enviando en este momento ("id:tipo")
+const ordenesProgramadasEnCurso = new Set();
 
-    await escribirOrdenCompresor(compresor, false);
+// Fecha en horario LOCAL, no UTC: toISOString() ya se adelanta al día
+// siguiente durante la noche en Argentina (UTC-3), lo que desalineaba esto
+// contra la hora (que sí es local) y contra las excepciones de calendario
+// guardadas con la fecha local real.
+function fechaLocalAAAAMMDD(fecha) {
 
-    db.run(
-        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
-         VALUES (?, 'apagado', 'programado')`,
-        [compresor.id]
+    return fecha.getFullYear() + '-' +
+        String(fecha.getMonth() + 1).padStart(2, '0') + '-' +
+        String(fecha.getDate()).padStart(2, '0');
+}
+
+// "18:00" (o "8:00") -> minutos desde la medianoche. null si no es una hora válida.
+function minutoDelDia(texto) {
+
+    const partes = /^(\d{1,2}):(\d{2})$/.exec(String(texto === null || texto === undefined ? '' : texto).trim());
+
+    if (!partes) {
+        return null;
+    }
+
+    const horas = Number(partes[1]);
+    const minutos = Number(partes[2]);
+
+    return horas < 24 && minutos < 60 ? horas * 60 + minutos : null;
+}
+
+// ¿Está vigente ahora esta hora programada? En modo prueba solo vale el minuto
+// exacto (así se puede probar el horario sin que se repita durante toda la ventana).
+function ordenProgramadaVigente(horaObjetivo, minutoActual, modoPrueba) {
+
+    const desde = minutoDelDia(horaObjetivo);
+
+    if (desde === null) {
+        return false;
+    }
+
+    if (modoPrueba) {
+        return minutoActual === desde;
+    }
+
+    return minutoActual >= desde && minutoActual < desde + VENTANA_ORDEN_PROGRAMADA_MIN;
+}
+
+// Manda la orden programada de apagado o encendido. Solo si el PLC la recibió se
+// anota en el historial y el día se da por cumplido; si no, el día queda sin
+// marcar y el próximo minuto se reintenta (hasta que se cierra la ventana).
+async function ejecutarOrdenProgramada(compresor, tipo, horaObjetivo, hoy, minutoActual, modoPrueba) {
+
+    const encender = tipo === 'encendido';
+
+    const resueltoHoy = encender ? ultimoEncendidoPorCompresor : ultimoApagadoPorCompresor;
+
+    const clave = `${compresor.id}:${tipo}`;
+
+    if (ordenesProgramadasEnCurso.has(clave)) {
+        return;
+    }
+
+    ordenesProgramadasEnCurso.add(clave);
+
+    try {
+
+        const resultado = await escribirOrdenCompresor(compresor, encender);
+
+        if (resultado.ok) {
+
+            if (!modoPrueba) {
+                resueltoHoy[compresor.id] = hoy;
+            }
+
+            db.run(
+                `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
+                 VALUES (?, ?, 'programado')`,
+                [compresor.id, tipo],
+                err => {
+
+                    if (err) {
+                        console.error(`Error anotando en el historial el ${tipo} programado del compresor "${compresor.nombre}":`, err);
+                    }
+                }
+            );
+
+            return;
+        }
+
+        if (resultado.motivo === 'sin_configurar') {
+
+            // Reintentar no sirve de nada: falta cargar la configuración
+            if (!modoPrueba) {
+                resueltoHoy[compresor.id] = hoy;
+            }
+
+            console.warn(
+                `Compresor "${compresor.nombre}": el ${tipo} programado de las ${horaObjetivo} no se cumplió: ` +
+                `falta cargar la IP o el coil de marcha de este compresor en Administración.`
+            );
+
+            return;
+        }
+
+        // El PLC no recibió la orden (el detalle ya quedó en el log, en
+        // escribirOrdenCompresor). Si todavía queda ventana, se reintenta en el
+        // próximo ciclo; si no, se avisa que no se cumplió.
+        const desde = minutoDelDia(horaObjetivo);
+
+        if (modoPrueba || minutoActual + 1 >= desde + VENTANA_ORDEN_PROGRAMADA_MIN) {
+
+            console.error(
+                `Compresor "${compresor.nombre}": el ${tipo} programado de las ${horaObjetivo} no se cumplió: ` +
+                `no se pudo enviar la orden al PLC${modoPrueba ? '' : ` en ${VENTANA_ORDEN_PROGRAMADA_MIN} minutos de intentos`}. ` +
+                `El compresor no recibió la orden.`
+            );
+        }
+
+    } finally {
+
+        ordenesProgramadasEnCurso.delete(clave);
+    }
+}
+
+// Al arrancar: el historial dice qué órdenes programadas ya se cumplieron hoy.
+// Sin esto, un reinicio del programa dentro de la ventana repetiría la orden
+// (lo que se guarda en memoria se pierde al reiniciar). Corre unos segundos
+// después de arrancar, para que las tablas ya estén creadas; el primer ciclo
+// del programador es recién a los 60 s.
+function cargarOrdenesProgramadasDeHoy() {
+
+    db.all(
+        `SELECT compresor_id, tipo, fecha_hora FROM compresores_eventos
+         WHERE origen = 'programado' AND fecha_hora >= datetime('now', '-2 days')`,
+        [],
+        (err, filas) => {
+
+            if (err) {
+                console.error('Error leyendo el historial de compresores al arrancar:', err);
+                return;
+            }
+
+            const hoy = fechaLocalAAAAMMDD(new Date());
+
+            filas.forEach(f => {
+
+                // fecha_hora está en UTC (ver fechaUtcALocal)
+                const fecha = new Date(f.fecha_hora.replace(' ', 'T') + 'Z');
+
+                if (fechaLocalAAAAMMDD(fecha) !== hoy) {
+                    return;
+                }
+
+                const resueltoHoy = f.tipo === 'encendido' ? ultimoEncendidoPorCompresor : ultimoApagadoPorCompresor;
+
+                resueltoHoy[f.compresor_id] = hoy;
+            });
+        }
     );
 }
 
-async function ejecutarEncendidoCompresor(compresor) {
-
-    await escribirOrdenCompresor(compresor, true);
-
-    db.run(
-        `INSERT INTO compresores_eventos (compresor_id, tipo, origen)
-         VALUES (?, 'encendido', 'programado')`,
-        [compresor.id]
-    );
-}
+setTimeout(cargarOrdenesProgramadasDeHoy, 10 * 1000);
 
 setInterval(() => {
 
     const ahora = new Date();
 
-    // Fecha en horario LOCAL, no UTC: toISOString() ya se adelanta al día
-    // siguiente durante la noche en Argentina (UTC-3), lo que desalineaba
-    // esto contra horaActual (que sí es local) y contra las excepciones de
-    // calendario guardadas con la fecha local real.
-    const hoy =
-        ahora.getFullYear() + '-' +
-        String(ahora.getMonth() + 1).padStart(2, '0') + '-' +
-        String(ahora.getDate()).padStart(2, '0');
+    const hoy = fechaLocalAAAAMMDD(ahora);
 
-    const horaActual =
-        String(ahora.getHours()).padStart(2, '0') + ':' +
-        String(ahora.getMinutes()).padStart(2, '0');
+    const minutoActual = ahora.getHours() * 60 + ahora.getMinutes();
 
     db.all(
         `SELECT clave, valor FROM compresores_config
@@ -1814,14 +1957,12 @@ setInterval(() => {
                                         ? excepcion.hora_encendido
                                         : (c.hora_encendido || horaEncendidoGlobal);
 
-                                if (faltaApagado && apagadoObjetivo && horaActual === apagadoObjetivo) {
-                                    if (!modoPrueba) ultimoApagadoPorCompresor[c.id] = hoy;
-                                    ejecutarApagadoCompresor(c);
+                                if (faltaApagado && ordenProgramadaVigente(apagadoObjetivo, minutoActual, modoPrueba)) {
+                                    ejecutarOrdenProgramada(c, 'apagado', apagadoObjetivo, hoy, minutoActual, modoPrueba);
                                 }
 
-                                if (faltaEncendido && encendidoObjetivo && horaActual === encendidoObjetivo) {
-                                    if (!modoPrueba) ultimoEncendidoPorCompresor[c.id] = hoy;
-                                    ejecutarEncendidoCompresor(c);
+                                if (faltaEncendido && ordenProgramadaVigente(encendidoObjetivo, minutoActual, modoPrueba)) {
+                                    ejecutarOrdenProgramada(c, 'encendido', encendidoObjetivo, hoy, minutoActual, modoPrueba);
                                 }
                             }
                         );

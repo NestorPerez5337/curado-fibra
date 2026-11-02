@@ -271,6 +271,21 @@ const REGLAS = [
     },
 
     {
+        id: 'compresor-orden-programada',
+        area: 'Compresores',
+        patron: /^Compresor "([^"]*)": el (apagado|encendido) programado de las (\d{1,2}:\d{2}) no se cumplió: ([\s\S]*)$/,
+        explicar: m => /^falta cargar/.test(m[4])
+            ? {
+                queSignifica: `El ${m[2]} programado de las ${m[3]} del compresor «${m[1]}» no se mandó porque a ese compresor le falta cargar la IP o el coil de marcha.`,
+                queHacer: 'Cargar la IP y el coil de marcha de ese compresor en Administración. Mientras falten, los horarios automáticos no hacen nada en ese equipo.'
+            }
+            : {
+                queSignifica: `El ${m[2]} programado de las ${m[3]} del compresor «${m[1]}» no se cumplió: el PLC no respondió${/en (\d+) minutos/.test(m[4]) ? ` en los ${/en (\d+) minutos/.exec(m[4])[1]} minutos en que se reintentó` : ''}. El compresor no recibió la orden.`,
+                queHacer: 'Verificar en «Conexiones» (más arriba) el estado del PLC de ese compresor. Si todavía hace falta, mandar la orden a mano desde la pantalla de Compresores y confirmar en el equipo que haya quedado como se esperaba.'
+            }
+    },
+
+    {
         id: 'devanadora-escritura',
         area: 'Devanadoras',
         patron: /Error al escribir en el PLC DEV/,
