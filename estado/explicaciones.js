@@ -315,6 +315,18 @@ const REGLAS = [
         })
     },
 
+    // ---------- Inicio de sesión
+
+    {
+        id: 'login-bloqueo',
+        area: 'Inicio de sesión',
+        patron: /^Login: demasiados intentos fallidos .*: se bloqueó por (\d+) minutos/,
+        explicar: m => ({
+            queSignifica: `Se probaron contraseñas incorrectas varias veces seguidas y el programa bloqueó ese usuario (o esa dirección) por ${m[1]} minutos. Puede ser un operador que olvidó la contraseña o alguien probando claves.`,
+            queHacer: 'Si es un operador conocido: esperar a que termine el bloqueo o cambiarle la contraseña desde Administración (eso lo desbloquea al instante). Si la dirección del mensaje no corresponde a ningún equipo conocido, conviene averiguar quién es.'
+        })
+    },
+
     // ---------- Horómetros (MQTT / Node-RED)
 
     {
