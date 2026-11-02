@@ -2234,6 +2234,12 @@ const MAX_MUESTRAS_ENSAYO = 1800;
 let enGracia = false;
 let tiempoApagado = null;
 
+// Se activa al cortar un ensayo por el tope de muestras. Mientras la variable
+// del PLC siga en ON no se inicia otro ensayo: sin esto, una variable pegada en
+// ON generaba un ensayo nuevo cada 30 minutos, uno atrás del otro. Se libera
+// recién cuando la variable se apaga.
+let esperaApagadoTrasTope = false;
+
 // Cómo viene la comunicación con el PLC del ensayo (la lee el panel de
 // Estado del Sistema, así no hace falta abrirle otra conexión al PLC).
 const estadoPlcEnsayo = {
@@ -2445,7 +2451,43 @@ setInterval(async () => {
         // INICIO ENSAYO
         // ==========================================
 
-        if (ensayando && !ensayoActivo) {
+        if (!ensayando && esperaApagadoTrasTope) {
+
+            esperaApagadoTrasTope = false;
+
+            console.log('Variable apagada: ya se puede iniciar un ensayo nuevo');
+        }
+
+        if (ensayando && !ensayoActivo && !esperaApagadoTrasTope) {
+
+            // Primero se leen la OP y el caño; recién con eso en mano el ensayo se
+            // da por iniciado. Si la lectura falla, el ensayo queda sin iniciar y el
+            // próximo ciclo (1 s después) lo reintenta. Antes se marcaba como activo
+            // antes de leer, y si la lectura fallaba el ensayo seguía con la OP y el
+            // caño del ensayo anterior (o con la OP vacía) y se guardaba así.
+            let opLeida;
+            let canoLeido;
+
+            try {
+
+                const opData =
+                    await client.readHoldingRegisters(150, 1);
+
+                const canoData =
+                    await client.readHoldingRegisters(152, 1);
+
+                opLeida =
+                    opData.response.body.values[0];
+
+                canoLeido =
+                    canoData.response.body.values[0];
+
+            } catch (err) {
+
+                throw new Error(
+                    `No se pudo leer la OP y el caño para iniciar el ensayo, se reintenta en 1 s (${err.message})`
+                );
+            }
 
             ensayoActivo = true;
 
@@ -2457,19 +2499,11 @@ setInterval(async () => {
 
             inicioEnsayoMs = Date.now();
 
+            opActual = opLeida;
+
+            canoActual = canoLeido;
+
             console.log('INICIO ENSAYO');
-
-            const opData =
-                await client.readHoldingRegisters(150, 1);
-
-            const canoData =
-                await client.readHoldingRegisters(152, 1);
-
-            opActual =
-                opData.response.body.values[0];
-
-            canoActual =
-                canoData.response.body.values[0];
 
             console.log(
                 `OP ${opActual} | Caño ${canoActual}`
@@ -2542,8 +2576,11 @@ setInterval(async () => {
             if (alcanzoTopeMuestras) {
                 console.warn(
                     `⚠️ Ensayo cortado por seguridad: llegó a ${MAX_MUESTRAS_ENSAYO} muestras sin que la ` +
-                    `variable del PLC se apague. Revisar si quedó pegada en ON.`
+                    `variable del PLC se apague. Revisar si quedó pegada en ON. No se inicia otro ensayo ` +
+                    `hasta que la variable se apague.`
                 );
+
+                esperaApagadoTrasTope = true;
             } else {
                 console.log('FIN ENSAYO');
             }
