@@ -2082,19 +2082,123 @@ app.get('/api/leer-plc', requierePermiso('devanadoras'), async (req, res) => {
 // ESCRIBIR PLC
 // ======================================================
 
+// Los registros del PLC son de 16 bits sin signo.
+const REGISTRO_PLC_MAX = 65535;
+
+// Pasa un valor de la receta tal como llega de la pantalla (el texto de un
+// campo numérico) a entero. null si no sirve para un registro: vacío, con
+// decimales ("12.7"), en notación científica ("1e3"), negativo o fuera de
+// rango. parseInt() los aceptaba recortándolos en silencio ("12.7" -> 12,
+// "1e3" -> 1) o fallaba recién a mitad de la escritura.
+function enteroDeRegistroPlc(valor) {
+
+    let numero;
+
+    if (typeof valor === 'number') {
+        numero = valor;
+    } else if (typeof valor === 'string' && /^\d+(\.\d+)?$/.test(valor.trim())) {
+        numero = Number(valor.trim());
+    } else {
+        return null;
+    }
+
+    return Number.isInteger(numero) && numero >= 0 && numero <= REGISTRO_PLC_MAX ? numero : null;
+}
+
+// Valida la receta que mandó la pantalla ANTES de tocar ningún PLC: así una
+// receta con un dato malo no se escribe a medias. "mapasDestino" son los mapas
+// de registros donde se va a escribir; cada campo tiene que existir en todos.
+// Devuelve { limpios } (los valores ya convertidos a entero) o { error }.
+function validarRecetaPlc(valores, mapasDestino) {
+
+    if (!valores || typeof valores !== 'object' || Array.isArray(valores)) {
+        return { error: 'No llegaron valores para enviar al PLC.' };
+    }
+
+    const claves = Object.keys(valores);
+
+    if (claves.length === 0) {
+        return { error: 'No hay ningún valor para enviar: completá al menos un campo.' };
+    }
+
+    const limpios = {};
+
+    for (const clave of claves) {
+
+        if (!mapasDestino.every(mapa => Object.hasOwn(mapa, clave))) {
+            return { error: `El campo "${String(clave).slice(0, 30)}" no existe en el PLC.` };
+        }
+
+        const entero = enteroDeRegistroPlc(valores[clave]);
+
+        if (entero === null) {
+            return {
+                error: `El valor de ${clave.toUpperCase()} no es válido ("${String(valores[clave]).slice(0, 20)}"): ` +
+                    `tiene que ser un número entero entre 0 y ${REGISTRO_PLC_MAX}. No se envió nada al PLC.`
+            };
+        }
+
+        limpios[clave] = entero;
+    }
+
+    return { limpios };
+}
+
+// El PLC de la devanadora número "dev" (1 a 6), o null si no existe. Se busca
+// solo entre las claves propias: CONFIG_PLCS["__proto__"] o ["constructor"]
+// devolverían cosas que no son una máquina.
+function plcDeDevanadora(dev) {
+
+    if (typeof dev !== 'number' && typeof dev !== 'string') {
+        return null;
+    }
+
+    return Object.hasOwn(CONFIG_PLCS, String(dev)) ? CONFIG_PLCS[String(dev)] : null;
+}
+
+// Un solo seteo de recetas por vez, de cualquier usuario: dos operadores
+// escribiendo a la vez (o uno durante el seteo masivo) mezclaban sus valores
+// registro por registro y la máquina quedaba con una receta que nadie armó.
+let seteoPlcEnCurso = false;
+
+const MENSAJE_SETEO_OCUPADO =
+    'Hay otro seteo de receta en curso (de otro usuario o el masivo). Esperá unos segundos y volvé a intentar.';
+
 app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => {
+
+    const { dev, canal, valores } = req.body || {};
+
+    const config = plcDeDevanadora(dev);
+
+    if (!config) {
+        return res.status(404).send("PLC no encontrado");
+    }
+
+    // Antes cualquier canal distinto de 1 caía en el canal 2
+    if ((typeof canal !== 'number' && typeof canal !== 'string') || (String(canal) !== '1' && String(canal) !== '2')) {
+        return res.status(400).type('text/plain').send('Canal inválido: tiene que ser 1 o 2. No se envió nada al PLC.');
+    }
+
+    const mapa =
+        String(canal) === '1'
+            ? config.mapa.canal1
+            : config.mapa.canal2;
+
+    const receta = validarRecetaPlc(valores, [mapa]);
+
+    if (receta.error) {
+        return res.status(400).type('text/plain').send(receta.error);
+    }
+
+    if (seteoPlcEnCurso) {
+        return res.status(409).type('text/plain').send(MENSAJE_SETEO_OCUPADO);
+    }
+
+    seteoPlcEnCurso = true;
 
     let socket = null;
 
     try {
-
-        const { dev, canal, valores } = req.body;
-
-        const config = CONFIG_PLCS[dev];
-
-        if (!config) {
-            return res.status(404).send("PLC no encontrado");
-        }
 
         const conexion =
             await crearClienteModbus(
@@ -2106,23 +2210,18 @@ app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => 
 
         const client = conexion.client;
 
-        const mapa =
-            canal == 1
-                ? config.mapa.canal1
-                : config.mapa.canal2;
-
-        for (const key in valores) {
+        for (const [clave, valor] of Object.entries(receta.limpios)) {
 
             await client.writeSingleRegister(
-                mapa[key],
-                parseInt(valores[key])
+                mapa[clave],
+                valor
             );
         }
 
         socket.end();
         socket.destroy();
 
-        registrarLog(req, 'devanadoras', `Seteó DEV ${dev} - CANAL ${canal}`, valores);
+        registrarLog(req, 'devanadoras', `Seteó DEV ${String(dev)} - CANAL ${String(canal)}`, receta.limpios);
 
         res.json({
             status: 'ok'
@@ -2137,6 +2236,10 @@ app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => 
         }
 
         res.status(500).send("Error");
+
+    } finally {
+
+        seteoPlcEnCurso = false;
     }
 });
 
@@ -2147,8 +2250,28 @@ app.post('/api/setear-plc', requierePermiso('devanadoras'), async (req, res) => 
 // ESCRIBIR EN TODOS LOS CANALES DE TODAS LAS MÁQUINAS (12 CANALES EN TOTAL)
 // ======================================================
 app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) => {
+
+    const { valores } = req.body || {};
+
+    // La receta se valida entera antes de tocar ninguna máquina. Antes un valor
+    // inválido hacía fallar cada PLC a mitad de la escritura y las 6 máquinas
+    // quedaban con la receta a medias.
+    const receta = validarRecetaPlc(
+        valores,
+        Object.values(CONFIG_PLCS).flatMap(config => [config.mapa.canal1, config.mapa.canal2])
+    );
+
+    if (receta.error) {
+        return res.status(400).type('text/plain').send(receta.error);
+    }
+
+    if (seteoPlcEnCurso) {
+        return res.status(409).type('text/plain').send(MENSAJE_SETEO_OCUPADO);
+    }
+
+    seteoPlcEnCurso = true;
+
     try {
-        const { valores } = req.body;
 
         console.log(`🚀 Iniciando seteo masivo total: Escribiendo receta en Canal 1 y Canal 2 de las 6 máquinas...`);
 
@@ -2171,19 +2294,15 @@ app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) =
 
                 // 1. ESCRIBIR EN EL CANAL 1 DE ESTA MÁQUINA
                 const mapaCanal1 = config.mapa.canal1;
-                for (const key in valores) {
-                    if (mapaCanal1[key] !== undefined) {
-                        await client.writeSingleRegister(mapaCanal1[key], parseInt(valores[key]));
-                    }
+                for (const [clave, valor] of Object.entries(receta.limpios)) {
+                    await client.writeSingleRegister(mapaCanal1[clave], valor);
                 }
                 console.log(`✅ PLC DEV ${dev} - Canal 1: Configurado.`);
 
                 // 2. ESCRIBIR EN EL CANAL 2 DE ESTA MÁQUINA
                 const mapaCanal2 = config.mapa.canal2;
-                for (const key in valores) {
-                    if (mapaCanal2[key] !== undefined) {
-                        await client.writeSingleRegister(mapaCanal2[key], parseInt(valores[key]));
-                    }
+                for (const [clave, valor] of Object.entries(receta.limpios)) {
+                    await client.writeSingleRegister(mapaCanal2[clave], valor);
                 }
                 console.log(`✅ PLC DEV ${dev} - Canal 2: Configurado.`);
 
@@ -2204,10 +2323,10 @@ app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) =
                 req,
                 'devanadoras',
                 `Seteó una receta masiva con fallas en las máquinas ${fallos.join(', ')} de 6`,
-                valores
+                receta.limpios
             );
         } else {
-            registrarLog(req, 'devanadoras', 'Seteó una receta en TODAS las máquinas (canal 1 y 2, las 6)', valores);
+            registrarLog(req, 'devanadoras', 'Seteó una receta en TODAS las máquinas (canal 1 y 2, las 6)', receta.limpios);
         }
 
         // Siempre respondemos 200 (la operación en sí no reventó), pero
@@ -2219,6 +2338,8 @@ app.post('/api/setear-todas', requierePermiso('devanadoras'), async (req, res) =
     } catch (e) {
         console.error("Error general en el proceso masivo total:", e);
         res.status(500).send("Error interno en seteo masivo total");
+    } finally {
+        seteoPlcEnCurso = false;
     }
 });
 // ======================================================
