@@ -19,10 +19,18 @@ services:
 
     environment:
       TZ: America/Argentina/Buenos_Aires
-      ADMIN_USER: admin
-      ADMIN_PASS: 1234
-      SESSION_SECRET: clave_super_secreta_2026
       PORT: 3000
+      # Administrador inicial y firma de las sesiones. Los valores NO van
+      # acá (el repositorio es público): se cargan en Portainer -> Stacks ->
+      # curado-fibra -> Environment variables.
+      #  - ADMIN_USER / ADMIN_PASS: solo se usan la primera vez, cuando la base
+      #    no tiene ningún administrador. Si ADMIN_PASS queda vacía se genera
+      #    una contraseña al azar y se muestra una sola vez en el log.
+      #  - SESSION_SECRET: texto largo al azar. Si queda vacío se genera uno
+      #    en cada arranque (el panel de Estado lo avisa).
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
       # Visor de Ensayos PH (SQL Server, solo lectura). La contraseña NO va
       # acá: se carga en Portainer -> Stacks -> curado-fibra -> Environment
       # variables, con el nombre PH_SQL_PASSWORD.
