@@ -381,6 +381,16 @@ const REGLAS = [
         })
     },
 
+    {
+        id: 'backup-rotacion',
+        area: 'Backups',
+        patron: /^Error borrando backups viejos/,
+        explicar: () => ({
+            queSignifica: 'El programa no pudo borrar un backup viejo (siempre conserva los últimos 28 de cada base). Los backups nuevos se siguen haciendo, pero si el aviso se repite la carpeta de backups va a ir ocupando cada vez más disco.',
+            queHacer: 'Revisar el espacio en disco (panel «Disco»). Si el aviso se repite, avisar a soporte para borrar a mano los backups más viejos.'
+        })
+    },
+
     // ---------- Base de datos local y disco
 
     {

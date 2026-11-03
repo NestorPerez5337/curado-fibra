@@ -413,16 +413,32 @@ const BACKUPS_A_CONSERVAR = 28; // ~7 días si corre cada 6hs
 // BACKUPS_A_CONSERVAR de cada una.
 const PREFIJOS_BACKUP_DB = ['recetas_', 'monitor_'];
 
+// La rotación nunca tira abajo el backup: si un archivo viejo no se puede
+// borrar, queda el aviso y se sigue con los demás.
 function rotarBackups(prefijo) {
 
     const carpeta = path.join(__dirname, 'backups');
 
-    const archivos = fs.readdirSync(carpeta)
-        .filter(n => n.startsWith(prefijo) && n.endsWith('.db'))
-        .sort();
+    let archivos;
+
+    try {
+        archivos = fs.readdirSync(carpeta)
+            .filter(n => n.startsWith(prefijo) && n.endsWith('.db'))
+            .sort();
+    } catch (err) {
+        console.error(`Error borrando backups viejos (${prefijo}...): no se pudo leer la carpeta de backups:`, err.message);
+        return;
+    }
 
     while (archivos.length > BACKUPS_A_CONSERVAR) {
-        fs.unlinkSync(path.join(carpeta, archivos.shift()));
+
+        const nombre = archivos.shift();
+
+        try {
+            fs.unlinkSync(path.join(carpeta, nombre));
+        } catch (err) {
+            console.error(`Error borrando backups viejos: no se pudo borrar ${nombre}:`, err.message);
+        }
     }
 }
 
@@ -441,93 +457,205 @@ function timestampBackup() {
     );
 }
 
-function hacerBackup() {
+// El nombre lleva el segundo en que se hizo. Si ya hay un backup de ese mismo
+// segundo (dos pedidos casi juntos), se le agrega _02, _03... para no pisarlo
+// ni fallar (VACUUM INTO exige que el archivo no exista). "_02" ordena después
+// del nombre sin sufijo, así que la rotación sigue borrando siempre los más viejos.
+function nombresDeBackupLibres() {
 
-    return new Promise((resolve, reject) => {
+    const carpeta = path.join(__dirname, 'backups');
+    const sello = timestampBackup();
 
-        const sello = timestampBackup();
-        const nombreDb = `recetas_${sello}.db`;
-        const nombreMonitor = `monitor_${sello}.db`;
-        const rutaDb = path.join(__dirname, 'backups', nombreDb);
-        const rutaMonitor = path.join(__dirname, 'backups', nombreMonitor);
+    for (let n = 1; n <= 99; n++) {
+
+        const sufijo = n === 1 ? '' : `_${String(n).padStart(2, '0')}`;
+        const nombreDb = `recetas_${sello}${sufijo}.db`;
+        const nombreMonitor = `monitor_${sello}${sufijo}.db`;
+
+        if (!fs.existsSync(path.join(carpeta, nombreDb)) && !fs.existsSync(path.join(carpeta, nombreMonitor))) {
+            return { nombreDb, nombreMonitor };
+        }
+    }
+
+    throw new Error(`Ya hay 99 backups del mismo segundo (${sello})`);
+}
+
+function quitarArchivo(ruta) {
+
+    try {
+        fs.rmSync(ruta, { force: true });
+    } catch {
+        // no se pudo borrar: se queda como está
+    }
+}
+
+// Copiamos al backup los PDFs que todavía no estén ahí (los PDFs no cambian
+// una vez generados, así que no hace falta volver a copiar los que ya están).
+// Cada archivo va por su cuenta: uno que falle no deja sin copiar a los demás,
+// y se copia con un nombre ".parcial" que recién se renombra al terminar, así
+// un corte a la mitad no deja un PDF truncado que después se dé por copiado.
+async function copiarPdfsAlBackup() {
+
+    const origen = path.join(__dirname, 'pdfs');
+    const destino = path.join(__dirname, 'backups', 'pdfs');
+    const resultado = { copiados: 0, fallidos: [], error: null };
+
+    const existe = ruta => fs.promises.access(ruta).then(() => true, () => false);
+
+    let entradas;
+
+    try {
+
+        await fs.promises.mkdir(destino, { recursive: true });
+
+        // restos de una copia que quedó a medias en una vuelta anterior
+        for (const nombre of await fs.promises.readdir(destino)) {
+            if (nombre.endsWith('.parcial')) {
+                await fs.promises.rm(path.join(destino, nombre), { force: true }).catch(() => {});
+            }
+        }
+
+        entradas = await fs.promises.readdir(origen, { withFileTypes: true });
+
+    } catch (err) {
+        resultado.error = err;
+        return resultado;
+    }
+
+    for (const entrada of entradas) {
+
+        // una subcarpeta no es un PDF
+        if (!entrada.isFile()) {
+            continue;
+        }
+
+        const rutaDestino = path.join(destino, entrada.name);
+        const rutaParcial = rutaDestino + '.parcial';
+
+        try {
+
+            if (await existe(rutaDestino)) {
+                continue;
+            }
+
+            await fs.promises.copyFile(path.join(origen, entrada.name), rutaParcial);
+            await fs.promises.rename(rutaParcial, rutaDestino);
+
+            resultado.copiados++;
+
+        } catch (err) {
+
+            resultado.fallidos.push({ nombre: entrada.name, motivo: err.message });
+            await fs.promises.rm(rutaParcial, { force: true }).catch(() => {});
+        }
+    }
+
+    return resultado;
+}
+
+async function hacerBackupAhora() {
+
+    const { nombreDb, nombreMonitor } = nombresDeBackupLibres();
+    const rutaDb = path.join(__dirname, 'backups', nombreDb);
+    const rutaMonitor = path.join(__dirname, 'backups', nombreMonitor);
+
+    try {
 
         // VACUUM INTO genera una copia consistente de la base aunque
         // esté siendo usada en simultáneo, a diferencia de copiar el
         // archivo .db directamente.
-        db.run(`VACUUM INTO ?`, [rutaDb], async err => {
+        try {
 
-            if (err) {
-                console.error('Error haciendo backup de la base:', err);
-                return reject(err);
-            }
+            await new Promise((resolve, reject) => {
+                db.run(`VACUUM INTO ?`, [rutaDb], err => (err ? reject(err) : resolve()));
+            });
 
-            // Base del Monitor de Variables. Si falla no se tira abajo el
-            // backup: la base principal ya quedó guardada, se deja el
-            // error en el log y se informa en el resultado.
-            let monitorGuardado = true;
+        } catch (err) {
 
-            const monitorYaExistia = fs.existsSync(rutaMonitor);
+            console.error('Error haciendo backup de la base:', err);
 
-            try {
-                await monitorAlmacen.respaldar(rutaMonitor);
-            } catch (errMonitor) {
-                monitorGuardado = false;
-                console.error('Error haciendo backup de la base del monitor:', errMonitor);
+            // El nombre es nuevo: si quedó un archivo a medias es de este
+            // intento, y no puede figurar como un backup bueno.
+            quitarArchivo(rutaDb);
 
-                // Si quedó un archivo a medias lo sacamos para que no figure
-                // como un backup bueno (pero nunca borramos uno que ya estaba).
-                if (!monitorYaExistia) {
-                    try {
-                        fs.rmSync(rutaMonitor, { force: true });
-                    } catch {
-                        // no se pudo borrar: se queda como está
-                    }
-                }
-            }
+            throw err;
+        }
 
-            // Copiamos al backup los PDFs que todavía no estén ahí
-            // (los PDFs no cambian una vez generados, así que no hace
-            // falta volver a copiar los que ya están).
-            try {
+        const advertencias = [];
 
-                const origen = path.join(__dirname, 'pdfs');
-                const destino = path.join(__dirname, 'backups', 'pdfs');
+        // Base del Monitor de Variables. Si falla no se tira abajo el
+        // backup: la base principal ya quedó guardada, se deja el
+        // error en el log y se informa en el resultado.
+        let monitorGuardado = true;
 
-                const archivos = fs.readdirSync(origen);
-                let copiados = 0;
+        try {
+            await monitorAlmacen.respaldar(rutaMonitor);
+        } catch (errMonitor) {
 
-                archivos.forEach(nombre => {
+            monitorGuardado = false;
+            console.error('Error haciendo backup de la base del monitor:', errMonitor);
+            advertencias.push('No se pudo guardar la copia de la base del Monitor de Variables.');
 
-                    const rutaDestino = path.join(destino, nombre);
+            // Si quedó un archivo a medias lo sacamos para que no figure
+            // como un backup bueno.
+            quitarArchivo(rutaMonitor);
+        }
 
-                    if (!fs.existsSync(rutaDestino)) {
-                        fs.copyFileSync(path.join(origen, nombre), rutaDestino);
-                        copiados++;
-                    }
-                });
+        // Un problema con los PDFs no invalida el backup: la base ya quedó guardada.
+        const pdfs = await copiarPdfsAlBackup();
 
-                // Rotación: nos quedamos solo con los últimos N backups de cada base
-                PREFIJOS_BACKUP_DB.forEach(rotarBackups);
+        if (pdfs.error) {
 
-                console.log(
-                    `Backup generado: ${nombreDb}` +
-                    (monitorGuardado ? ` y ${nombreMonitor}` : ' (sin la base del monitor)') +
-                    ` (${copiados} PDF nuevos copiados)`
-                );
+            console.error(`Error copiando PDFs al backup: no se pudo leer la carpeta de PDFs (${pdfs.error.message}). La base sí quedó guardada.`);
+            advertencias.push('No se pudo leer la carpeta de PDFs, así que no se copiaron.');
 
-                resolve({
-                    nombreDb,
-                    nombreMonitor: monitorGuardado ? nombreMonitor : null,
-                    pdfsCopiados: copiados
-                });
+        } else if (pdfs.fallidos.length > 0) {
 
-            } catch (err2) {
+            const intentados = pdfs.copiados + pdfs.fallidos.length;
+            const primero = pdfs.fallidos[0];
 
-                console.error('Error copiando PDFs al backup:', err2);
-                reject(err2);
-            }
-        });
-    });
+            console.error(
+                `Error copiando PDFs al backup: no se pudieron copiar ${pdfs.fallidos.length} de ${intentados} PDF ` +
+                `(por ejemplo "${primero.nombre}": ${primero.motivo}). La base sí quedó guardada.`
+            );
+            advertencias.push(`No se pudieron copiar ${pdfs.fallidos.length} PDF.`);
+        }
+
+        console.log(
+            `Backup generado: ${nombreDb}` +
+            (monitorGuardado ? ` y ${nombreMonitor}` : ' (sin la base del monitor)') +
+            ` (${pdfs.copiados} PDF nuevos copiados)`
+        );
+
+        return {
+            nombreDb,
+            nombreMonitor: monitorGuardado ? nombreMonitor : null,
+            pdfsCopiados: pdfs.copiados,
+            pdfsFallidos: pdfs.fallidos.length,
+            advertencias
+        };
+
+    } finally {
+
+        // Rotación: nos quedamos solo con los últimos N backups de cada base.
+        // Corre siempre, aunque algo de esta vuelta haya fallado: antes solo
+        // corría si se habían copiado bien los PDFs, y mientras eso fallaba
+        // los backups se acumulaban sin límite.
+        PREFIJOS_BACKUP_DB.forEach(rotarBackups);
+    }
+}
+
+// Un backup a la vez: el automático y uno manual, o dos clics seguidos, no
+// se pisan (se hacen uno después del otro).
+let colaBackups = Promise.resolve();
+
+function hacerBackup() {
+
+    const turno = colaBackups.then(hacerBackupAhora);
+
+    colaBackups = turno.catch(() => {});
+
+    return turno;
 }
 
 // Primer backup a los 30s de arrancar (para no competir con el arranque),
@@ -1378,7 +1506,7 @@ app.post('/api/backups', requiereAdmin, async (req, res) => {
 
         registrarLog(req, 'sistema', 'Generó un backup manual de la base de datos');
 
-        res.json({ status: 'ok', archivo: resultado.nombreDb });
+        res.json({ status: 'ok', archivo: resultado.nombreDb, advertencias: resultado.advertencias });
 
     } catch (err) {
 
