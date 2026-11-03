@@ -53,11 +53,10 @@ process.on('unhandledRejection', err => {
 const SESION_DURACION_MS = 2 * 60 * 60 * 1000;
 
 // Si falta SESSION_SECRET en el entorno, generamos uno al azar en vez de
-// usar un valor fijo (que quedaría visible en el propio repositorio y le
-// permitiría a cualquiera firmar una cookie de sesión válida). Con esto
-// el sistema sigue arrancando igual, solo que las sesiones no sobreviven
-// a un reinicio del proceso — no debería pasar en producción porque ahí
-// SESSION_SECRET ya está seteado en el entorno del contenedor.
+// usar un valor fijo (que quedaría visible en el propio repositorio, que
+// es público). Con esto el sistema sigue arrancando igual, solo que el
+// secreto cambia en cada arranque. En producción se carga en Portainer
+// (Stacks -> curado-fibra -> Environment variables).
 if (!process.env.SESSION_SECRET) {
     console.warn(
         '⚠️ No está seteada la variable de entorno SESSION_SECRET. ' +
@@ -232,8 +231,10 @@ db.serialize(() => {
         });
     });
 
-    // Si todavía no existe ningún administrador, creamos uno inicial
-    // con las credenciales de .env (o admin/1234 por defecto).
+    // Si todavía no existe ningún administrador, creamos uno inicial con
+    // ADMIN_USER / ADMIN_PASS del entorno. No hay contraseña por defecto
+    // (el repositorio es público: cualquiera conocería "1234"). Si falta
+    // ADMIN_PASS se genera una al azar y se muestra una sola vez en el log.
     db.get(
         `SELECT COUNT(*) AS total FROM usuarios WHERE es_admin = 1`,
         [],
@@ -249,7 +250,8 @@ db.serialize(() => {
             }
 
             const usuarioAdmin = process.env.ADMIN_USER || 'admin';
-            const passAdmin = process.env.ADMIN_PASS || '1234';
+            const passConfigurada = Boolean(process.env.ADMIN_PASS);
+            const passAdmin = process.env.ADMIN_PASS || crypto.randomBytes(12).toString('base64url');
             const { salt, hash } = hashearPassword(passAdmin);
 
             db.run(
@@ -265,6 +267,12 @@ db.serialize(() => {
                     }
 
                     console.log(`Usuario administrador inicial creado: ${usuarioAdmin}`);
+
+                    if (!passConfigurada) {
+                        // console.log y no warn/error a propósito: el panel de Estado
+                        // copia lo que sale por esas dos y la clave no debe quedar ahí.
+                        console.log(`Contraseña inicial de "${usuarioAdmin}" (se muestra una sola vez; cambiarla desde Administración): ${passAdmin}`);
+                    }
                 }
             );
         }

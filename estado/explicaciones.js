@@ -532,8 +532,8 @@ const REGLAS = [
         area: 'Programa',
         patron: /SESSION_SECRET/,
         explicar: () => ({
-            queSignifica: 'Falta la variable SESSION_SECRET. Las sesiones de los usuarios se cierran cada vez que el programa se reinicia.',
-            queHacer: 'Cargar la variable SESSION_SECRET en Portainer (variables de entorno del contenedor) y redesplegar.'
+            queSignifica: 'Falta la variable SESSION_SECRET (el texto secreto con el que se firman las sesiones). El programa usa uno al azar que cambia en cada arranque: todo funciona igual.',
+            queHacer: 'Cargar la variable SESSION_SECRET en Portainer (Stacks → curado-fibra → Environment variables) con un texto largo al azar y redesplegar. Con eso este aviso desaparece.'
         })
     },
 
