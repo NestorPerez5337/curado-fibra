@@ -619,8 +619,18 @@ async function crearBackup() {
         return;
     }
 
-    msg.className = 'msg ok';
-    msg.innerText = 'Backup generado.';
+    // La base se guardó; si algo secundario falló (PDFs, base del Monitor) el
+    // servidor lo informa en "advertencias".
+    const datos = await res.json().catch(() => ({}));
+    const advertencias = Array.isArray(datos.advertencias) ? datos.advertencias : [];
+
+    if (advertencias.length > 0) {
+        msg.className = 'msg error';
+        msg.innerText = 'Backup de la base generado, pero: ' + advertencias.join(' ') + ' Ver el panel de Estado.';
+    } else {
+        msg.className = 'msg ok';
+        msg.innerText = 'Backup generado.';
+    }
 
     cargarBackups();
 }
