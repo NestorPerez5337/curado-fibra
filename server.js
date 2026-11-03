@@ -598,6 +598,21 @@ function registrarLog(req, modulo, accion, detalle) {
     );
 }
 
+// Todas las fechas "locales" del programa son de esta zona (no cambia de
+// horario en verano desde 2009).
+const ZONA_HORARIA = 'America/Argentina/Buenos_Aires';
+
+const formatoPartesEnZona = new Intl.DateTimeFormat('en-US', {
+    timeZone: ZONA_HORARIA,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+});
+
 // SQLite graba los DATETIME DEFAULT CURRENT_TIMESTAMP en UTC siempre,
 // sin importar el TZ del contenedor. Esto convierte ese string
 // ("YYYY-MM-DD HH:MM:SS" en UTC) a la hora local de Argentina antes de
@@ -611,7 +626,7 @@ function fechaUtcALocal(fechaUtcSqlite) {
     const fechaUtc = new Date(fechaUtcSqlite.replace(' ', 'T') + 'Z');
 
     return fechaUtc.toLocaleString('es-AR', {
-        timeZone: 'America/Argentina/Buenos_Aires',
+        timeZone: ZONA_HORARIA,
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -619,6 +634,112 @@ function fechaUtcALocal(fechaUtcSqlite) {
         minute: '2-digit',
         second: '2-digit'
     });
+}
+
+// Los días que se eligen en pantalla (Registro de Cambios, historial de
+// compresores, Horómetros) son días de hora local, pero las fechas se
+// guardan en UTC. Comparar date(fecha_hora) con el día elegido corría el
+// límite 3 horas: lo ocurrido entre las 21:00 y las 24:00 de un día caía en
+// el siguiente. Por eso cada día elegido se convierte a su rango en UTC
+// (desde la medianoche local hasta la medianoche local siguiente) y se
+// compara contra ese rango.
+
+// Las partes de un instante (ms) vistas en la hora local
+function partesEnZona(ms) {
+
+    const partes = {};
+
+    for (const p of formatoPartesEnZona.formatToParts(new Date(ms))) {
+        if (p.type !== 'literal') {
+            partes[p.type] = Number(p.value);
+        }
+    }
+
+    return partes;
+}
+
+// Hora local menos UTC en ese instante, en ms (-3 horas en Argentina)
+function desfaseDeZonaMs(ms) {
+
+    const p = partesEnZona(ms);
+
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+}
+
+// Instante UTC (ms) en que empieza el día a/m/d en la hora local
+function inicioDeDiaLocalMs(a, m, d) {
+
+    const nominal = Date.UTC(a, m - 1, d);
+    const primero = nominal - desfaseDeZonaMs(nominal);
+
+    // segunda pasada por si el desfase cambia entre la medianoche y ese instante
+    return nominal - desfaseDeZonaMs(primero);
+}
+
+const aFormatoSqlite = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+
+// "AAAA-MM-DD" válido (existe en el calendario) -> { a, m, d }, o null
+function leerDia(texto) {
+
+    if (typeof texto !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(texto)) {
+        return null;
+    }
+
+    const [a, m, d] = texto.split('-').map(Number);
+    const f = new Date(Date.UTC(a, m - 1, d));
+
+    if (f.getUTCFullYear() !== a || f.getUTCMonth() !== m - 1 || f.getUTCDate() !== d) {
+        return null;
+    }
+
+    return { a, m, d };
+}
+
+// Día local (AAAA-MM-DD) de un instante guardado en UTC
+function diaLocalDeFechaUtc(fechaUtcSqlite) {
+
+    const ms = Date.parse(String(fechaUtcSqlite).replace(' ', 'T') + 'Z');
+
+    if (Number.isNaN(ms)) {
+        return null;
+    }
+
+    const p = partesEnZona(ms);
+
+    return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+// Pasa los días "desde" y "hasta" (cualquiera puede faltar) a un rango en UTC
+// para comparar contra las columnas de fecha: fecha >= desdeUtc AND fecha < hastaUtc.
+// Devuelve { error } si alguno no es una fecha AAAA-MM-DD válida.
+function rangoDeDiasEnUtc(desde, hasta) {
+
+    const rango = { desdeUtc: null, hastaUtc: null, error: null };
+
+    if (desde) {
+
+        const f = leerDia(desde);
+
+        if (!f) {
+            return { error: 'La fecha "desde" no es válida (se espera AAAA-MM-DD)' };
+        }
+
+        rango.desdeUtc = aFormatoSqlite(inicioDeDiaLocalMs(f.a, f.m, f.d));
+    }
+
+    if (hasta) {
+
+        const f = leerDia(hasta);
+
+        if (!f) {
+            return { error: 'La fecha "hasta" no es válida (se espera AAAA-MM-DD)' };
+        }
+
+        // el día "hasta" entra completo: el límite es la medianoche siguiente
+        rango.hastaUtc = aFormatoSqlite(inicioDeDiaLocalMs(f.a, f.m, f.d + 1));
+    }
+
+    return rango;
 }
 
 function usuarioDesdeFila(fila) {
@@ -1179,14 +1300,20 @@ app.get('/api/log', requiereAdmin, (req, res) => {
         params.push(modulo);
     }
 
-    if (desde) {
-        sql += ` AND date(fecha_hora) >= date(?)`;
-        params.push(desde);
+    const rango = rangoDeDiasEnUtc(desde, hasta);
+
+    if (rango.error) {
+        return res.status(400).send(rango.error);
     }
 
-    if (hasta) {
-        sql += ` AND date(fecha_hora) <= date(?)`;
-        params.push(hasta);
+    if (rango.desdeUtc) {
+        sql += ` AND fecha_hora >= ?`;
+        params.push(rango.desdeUtc);
+    }
+
+    if (rango.hastaUtc) {
+        sql += ` AND fecha_hora < ?`;
+        params.push(rango.hastaUtc);
     }
 
     sql += ` ORDER BY fecha_hora DESC LIMIT 1000`;
@@ -1779,14 +1906,20 @@ app.get('/api/compresores/eventos', requierePermiso('compresores'), (req, res) =
         params.push(compresorId);
     }
 
-    if (desde) {
-        sql += ` AND date(e.fecha_hora) >= date(?)`;
-        params.push(desde);
+    const rango = rangoDeDiasEnUtc(desde, hasta);
+
+    if (rango.error) {
+        return res.status(400).send(rango.error);
     }
 
-    if (hasta) {
-        sql += ` AND date(e.fecha_hora) <= date(?)`;
-        params.push(hasta);
+    if (rango.desdeUtc) {
+        sql += ` AND e.fecha_hora >= ?`;
+        params.push(rango.desdeUtc);
+    }
+
+    if (rango.hastaUtc) {
+        sql += ` AND e.fecha_hora < ?`;
+        params.push(rango.hastaUtc);
     }
 
     sql += ` ORDER BY e.fecha_hora DESC LIMIT 500`;
@@ -3336,21 +3469,30 @@ app.get('/api/horometros/datos', requierePermiso('horometros'), (req, res) => {
         return res.status(400).json({ error: 'Faltan parámetros de filtro.' });
     }
 
+    const rango = rangoDeDiasEnUtc(desde, hasta);
+
+    if (rango.error) {
+        return res.status(400).json({ error: rango.error });
+    }
+
     const listaMaquinas = maquinas.split(',');
     const placeholders = listaMaquinas.map(() => '?').join(',');
 
     const sql = `
-        SELECT maquina, horas, fecha 
-        FROM horometros 
-        WHERE maquina IN (${placeholders}) 
-          AND date(fecha) >= date(?)
-          AND date(fecha) <= date(?)
+        SELECT maquina, horas, fecha
+        FROM horometros
+        WHERE maquina IN (${placeholders})
+          AND fecha >= ?
+          AND fecha < ?
         ORDER BY fecha ASC
     `;
 
-    db.all(sql, [...listaMaquinas, desde, hasta], (err, rows) => {
+    db.all(sql, [...listaMaquinas, rango.desdeUtc, rango.hastaUtc], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+
+        // "fecha" se guarda en UTC; "dia" es el día de hora local al que
+        // pertenece la lectura, que es el que usa la pantalla para agrupar.
+        res.json(rows.map(r => ({ ...r, dia: diaLocalDeFechaUtc(r.fecha) })));
     });
 });
 

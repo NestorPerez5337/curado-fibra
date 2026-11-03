@@ -76,14 +76,18 @@
 
         let miGrafico = null;
 
+        // AAAA-MM-DD de una fecha en la hora de esta PC. toISOString() daba el
+        // día en UTC, que después de las 21:00 ya es el día siguiente.
+        const diaLocalISO = f => `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+
         // Al cargar la página, inicializamos las fechas por defecto (últimos 15 días) y cargamos las máquinas
         window.addEventListener('DOMContentLoaded', () => {
             const hasta = new Date();
             const desde = new Date();
             desde.setDate(hasta.getDate() - 15);
 
-            document.getElementById('fecha-hasta').value = hasta.toISOString().split('T')[0];
-            document.getElementById('fecha-desde').value = desde.toISOString().split('T')[0];
+            document.getElementById('fecha-hasta').value = diaLocalISO(hasta);
+            document.getElementById('fecha-desde').value = diaLocalISO(desde);
 
             cargarMaquinas();
         });
@@ -175,7 +179,11 @@
 
     // 1. Agrupamos los datos estrictamente por Fecha (Día) para mantener compatibilidad con los filtros
     rows.forEach(r => {
-        const fechaObj = new Date(r.fecha);
+        // "dia" (AAAA-MM-DD, hora local) lo manda el servidor. "fecha" está en
+        // UTC y sin marca de zona: new Date() la leería como hora local, 3 horas
+        // corrida, y lo de las 21:00 a las 24:00 caería en el día siguiente.
+        const [anioLectura, mesLectura, diaLectura] = r.dia.split('-').map(Number);
+        const fechaObj = new Date(anioLectura, mesLectura - 1, diaLectura);
         let label = "";
 
         if (escala === 'dia') {
