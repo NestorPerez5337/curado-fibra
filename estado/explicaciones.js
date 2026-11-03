@@ -538,6 +538,16 @@ const REGLAS = [
     },
 
     {
+        id: 'error-en-pedido',
+        area: 'Programa',
+        patron: /^Error no controlado en ([A-Z]+) (\S+):/,
+        explicar: coincidencia => ({
+            queSignifica: `Una pantalla o función falló por un error del programa al atender el pedido «${coincidencia[1]} ${coincidencia[2]}». Quien lo hizo vio «Error interno del servidor»; el resto del programa siguió funcionando.`,
+            queHacer: 'Si lo notó alguien o se repite, copiar el mensaje completo desde los registros del contenedor y pasarlo a soporte, con la pantalla y la hora.'
+        })
+    },
+
+    {
         id: 'session-secret',
         area: 'Programa',
         patron: /SESSION_SECRET/,
