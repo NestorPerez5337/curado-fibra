@@ -1540,6 +1540,30 @@ app.get('/api/backups/:archivo', requiereAdmin, (req, res) => {
 // apagado programado pasará de "simulado" (solo registra el evento)
 // a mandar la orden real por Modbus.
 
+// Hora de un horario programado ("HH:MM"; se acepta también "H:MM"). Devuelve la
+// hora como "HH:MM", null si viene vacía (= sin horario) o false si no es una
+// hora válida. Se guarda siempre con dos dígitos: así la muestra el campo de hora
+// de las pantallas, y una hora mal escrita no queda guardada sin que el
+// programador la encuentre nunca.
+function normalizarHora(valor) {
+
+    if (valor === undefined || valor === null || valor === '') {
+        return null;
+    }
+
+    if (typeof valor !== 'string') {
+        return false;
+    }
+
+    const minutos = minutoDelDia(valor);
+
+    if (minutos === null) {
+        return false;
+    }
+
+    return String(Math.floor(minutos / 60)).padStart(2, '0') + ':' + String(minutos % 60).padStart(2, '0');
+}
+
 app.get('/api/compresores', requierePermiso('compresores'), (req, res) => {
 
     db.all(
@@ -1642,6 +1666,15 @@ app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
 
     const { horaApagadoGlobal, horaEncendidoGlobal, modoPrueba } = req.body;
 
+    // Las horas se validan antes de guardar nada: una mal escrita quedaba
+    // guardada y el programador no la encontraba nunca, sin ningún aviso.
+    const apagadoGlobal = horaApagadoGlobal === undefined ? undefined : normalizarHora(horaApagadoGlobal);
+    const encendidoGlobal = horaEncendidoGlobal === undefined ? undefined : normalizarHora(horaEncendidoGlobal);
+
+    if (apagadoGlobal === false || encendidoGlobal === false) {
+        return res.status(400).send('La hora no es válida (se espera HH:MM)');
+    }
+
     // Cada valor de config se guarda por separado, y solo se toca el que
     // realmente vino en el pedido (si no vino, queda como estaba) — así
     // guardar el modo prueba desde Administración no pisa con NULL el
@@ -1649,20 +1682,20 @@ app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
     // viceversa.
     const tareas = [];
 
-    if (horaApagadoGlobal !== undefined) {
+    if (apagadoGlobal !== undefined) {
         tareas.push(next => db.run(
             `INSERT INTO compresores_config (clave, valor) VALUES ('hora_apagado_global', ?)
              ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
-            [horaApagadoGlobal || null],
+            [apagadoGlobal],
             next
         ));
     }
 
-    if (horaEncendidoGlobal !== undefined) {
+    if (encendidoGlobal !== undefined) {
         tareas.push(next => db.run(
             `INSERT INTO compresores_config (clave, valor) VALUES ('hora_encendido_global', ?)
              ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
-            [horaEncendidoGlobal || null],
+            [encendidoGlobal],
             next
         ));
     }
@@ -1701,8 +1734,8 @@ app.put('/api/compresores/config', requierePermiso('compresores'), (req, res) =>
         if (pendientes === 0 && !huboError) {
 
             const detalles = [];
-            if (horaApagadoGlobal !== undefined) detalles.push(`apagado "${horaApagadoGlobal || 'sin definir'}"`);
-            if (horaEncendidoGlobal !== undefined) detalles.push(`encendido "${horaEncendidoGlobal || 'sin definir'}"`);
+            if (apagadoGlobal !== undefined) detalles.push(`apagado "${apagadoGlobal || 'sin definir'}"`);
+            if (encendidoGlobal !== undefined) detalles.push(`encendido "${encendidoGlobal || 'sin definir'}"`);
             if (modoPrueba !== undefined && req.usuario.esAdmin) detalles.push(`modo prueba ${modoPrueba ? 'activado' : 'desactivado'}`);
 
             registrarLog(req, 'compresores', `Cambió la configuración de compresores (${detalles.join(', ')})`);
@@ -1749,34 +1782,77 @@ app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
     const { nombre, ip, puerto, marca, coilMarcha, coilEstado, horaApagado, horaEncendido, activo } = req.body;
     const id = req.params.id;
 
+    // Solo se cambia lo que viene en el pedido; lo que falta queda como estaba.
+    // (Antes un pedido sin "activo" activaba el compresor y uno sin horas se
+    // las borraba.) Una hora vacía ("" o null) sí es un pedido: borra el horario.
+    const cambios = {};
+
     // Solo el administrador puede tocar los datos de configuración del
-    // PLC (nombre, ip, puerto, marca, coils), y solo cuando los manda de
-    // verdad (formulario de Administración): el resto de los usuarios con
+    // PLC (nombre, ip, puerto, marca, coils), y solo cuando manda el nombre
+    // de verdad (formulario de Administración): el resto de los usuarios con
     // permiso de compresores, e incluso un admin editando desde la
     // pantalla de Compresores, únicamente programan los horarios propios
     // y activan/desactivan el compresor, sin tocar esos campos de
     // configuración (si no vienen en el body, no se pisan).
-    if (req.usuario.esAdmin && nombre !== undefined) {
+    const esConfiguracion = req.usuario.esAdmin && nombre !== undefined;
+
+    if (esConfiguracion) {
 
         const aEntero = v => (v === '' || v == null ? null : parseInt(v));
 
+        if (typeof nombre !== 'string' || !nombre.trim()) {
+            return res.status(400).send('El nombre es obligatorio');
+        }
+
+        cambios.nombre = nombre;
+
+        if (ip !== undefined) cambios.ip = ip || null;
+        if (puerto !== undefined) cambios.puerto = puerto || 502;
+        if (marca !== undefined) cambios.marca = marca || null;
+        if (coilMarcha !== undefined) cambios.coil_marcha = aEntero(coilMarcha);
+        if (coilEstado !== undefined) cambios.coil_estado = aEntero(coilEstado);
+    }
+
+    const apagado = horaApagado === undefined ? undefined : normalizarHora(horaApagado);
+    const encendido = horaEncendido === undefined ? undefined : normalizarHora(horaEncendido);
+
+    if (apagado === false || encendido === false) {
+        return res.status(400).send('La hora no es válida (se espera HH:MM)');
+    }
+
+    if (apagado !== undefined) cambios.hora_apagado = apagado;
+    if (encendido !== undefined) cambios.hora_encendido = encendido;
+
+    if (activo !== undefined) {
+
+        if (typeof activo !== 'boolean') {
+            return res.status(400).send('"activo" tiene que ser verdadero o falso');
+        }
+
+        cambios.activo = activo ? 1 : 0;
+    }
+
+    // Los nombres de columna son los de arriba (nunca texto del pedido)
+    const columnas = Object.keys(cambios);
+
+    if (columnas.length === 0) {
+        return res.status(400).send('No se mandó ningún dato para cambiar');
+    }
+
+    db.get(`SELECT nombre FROM compresores WHERE id = ?`, [id], (errNombre, filaNombre) => {
+
+        if (errNombre) {
+            console.error(errNombre);
+            return res.status(500).send('Error');
+        }
+
+        if (!filaNombre) {
+            return res.status(404).send('No existe ese compresor');
+        }
+
         db.run(
-            `UPDATE compresores
-             SET nombre = ?, ip = ?, puerto = ?, marca = ?, coil_marcha = ?, coil_estado = ?,
-                 hora_apagado = ?, hora_encendido = ?, activo = ?
-             WHERE id = ?`,
-            [
-                nombre,
-                ip || null,
-                puerto || 502,
-                marca || null,
-                aEntero(coilMarcha),
-                aEntero(coilEstado),
-                horaApagado || null,
-                horaEncendido || null,
-                activo === false ? 0 : 1,
-                id
-            ],
+            `UPDATE compresores SET ${columnas.map(c => `${c} = ?`).join(', ')} WHERE id = ?`,
+            [...columnas.map(c => cambios[c]), id],
             err => {
 
                 if (err) {
@@ -1784,39 +1860,23 @@ app.put('/api/compresores/:id', requierePermiso('compresores'), (req, res) => {
                     return res.status(500).send('Error');
                 }
 
-                registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
-                    ip, puerto, marca, coilMarcha, coilEstado, horaApagado, horaEncendido, activo
-                });
+                if (esConfiguracion) {
+
+                    registrarLog(req, 'compresores', `Editó el compresor "${nombre}"`, {
+                        ip, puerto, marca, coilMarcha, coilEstado, horaApagado: apagado, horaEncendido: encendido, activo
+                    });
+
+                } else {
+
+                    registrarLog(req, 'compresores', `Editó el horario del compresor "${filaNombre.nombre}"`, {
+                        horaApagado: apagado, horaEncendido: encendido, activo
+                    });
+                }
 
                 res.json({ status: 'ok' });
             }
         );
-
-    } else {
-
-        db.get(`SELECT nombre FROM compresores WHERE id = ?`, [id], (errNombre, filaNombre) => {
-
-            const nombreCompresor = filaNombre ? filaNombre.nombre : `id ${id}`;
-
-            db.run(
-                `UPDATE compresores SET hora_apagado = ?, hora_encendido = ?, activo = ? WHERE id = ?`,
-                [horaApagado || null, horaEncendido || null, activo === false ? 0 : 1, id],
-                err => {
-
-                    if (err) {
-                        console.error(err);
-                        return res.status(500).send('Error');
-                    }
-
-                    registrarLog(req, 'compresores', `Editó el horario del compresor "${nombreCompresor}"`, {
-                        horaApagado, horaEncendido, activo
-                    });
-
-                    res.json({ status: 'ok' });
-                }
-            );
-        });
-    }
+    });
 });
 
 app.delete('/api/compresores/:id', requiereAdmin, (req, res) => {
@@ -1940,13 +2000,27 @@ app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, r
         return res.status(400).send('Falta compresor o fecha');
     }
 
+    // El programador compara la fecha de hoy ("AAAA-MM-DD") con esta, letra por
+    // letra: una fecha con otro formato o que no existe ("2026-1-5", "2026-02-31")
+    // quedaba guardada y esa excepción nunca se aplicaba, sin ningún aviso.
+    if (!leerDia(fecha)) {
+        return res.status(400).send('La fecha no es válida (se espera AAAA-MM-DD)');
+    }
+
+    const apagado = normalizarHora(horaApagado);
+    const encendido = normalizarHora(horaEncendido);
+
+    if (apagado === false || encendido === false) {
+        return res.status(400).send('La hora no es válida (se espera HH:MM)');
+    }
+
     // La pantalla ya evita mandar esto, pero lo validamos también acá:
     // una excepción con las dos horas vacías crea una fila "fantasma" que
     // el programador automático interpreta como "hay excepción" (aunque
     // sus horarios sean null) y anula el horario propio/global de ese
     // compresor ese día sin ningún aviso. Cualquiera que llame a esta API
     // directo (no solo el botón de la pantalla) tiene que respetar esto.
-    if (!horaApagado && !horaEncendido) {
+    if (!apagado && !encendido) {
         return res.status(400).send('Hay que cargar al menos un horario (apagado o encendido)');
     }
 
@@ -1956,7 +2030,7 @@ app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, r
          ON CONFLICT(compresor_id, fecha) DO UPDATE SET
             hora_apagado = excluded.hora_apagado,
             hora_encendido = excluded.hora_encendido`,
-        [compresorId, fecha, horaApagado || null, horaEncendido || null],
+        [compresorId, fecha, apagado, encendido],
         function (err) {
 
             if (err) {
@@ -1972,8 +2046,8 @@ app.post('/api/compresores/excepciones', requierePermiso('compresores'), (req, r
                     req,
                     'compresores',
                     `Programó una excepción de calendario para "${nombreCompresor}" el ${fecha} ` +
-                    `(${horaApagado ? 'apaga a las ' + horaApagado : 'no apaga ese día'}, ` +
-                    `${horaEncendido ? 'enciende a las ' + horaEncendido : 'no enciende ese día'})`
+                    `(${apagado ? 'apaga a las ' + apagado : 'no apaga ese día'}, ` +
+                    `${encendido ? 'enciende a las ' + encendido : 'no enciende ese día'})`
                 );
             });
 
@@ -3388,40 +3462,68 @@ app.get('/api/pdfs', requierePermiso('visor'), (req, res) => {
 // LISTADO DE ENSAYOS
 // ======================================================
 
-app.get('/api/ensayos', requierePermiso('visor'), (req, res) => {
+// Cuántos PDFs se consultan a la vez. Leerlos de a uno con funciones síncronas
+// frenaba todo el programa (PLCs, pantallas, ensayo en curso) mientras duraba
+// el listado, y crece con cada ensayo guardado.
+const PDFS_POR_TANDA = 100;
+
+app.get('/api/ensayos', requierePermiso('visor'), async (req, res) => {
     // IMPORTANTE: Asegurate de que aquí diga 'pdfs' como arreglamos antes
     const carpeta = path.join(__dirname, 'pdfs');
 
-    if (!fs.existsSync(carpeta)) {
-        return res.json([]);
-    }
+    let archivos;
 
-    const archivos = fs.readdirSync(carpeta);
-    const ensayos = [];
+    try {
+        archivos = await fs.promises.readdir(carpeta);
+    } catch (err) {
 
-    archivos.forEach(nombreArchivo => {
-        if (!nombreArchivo.endsWith('.pdf')) {
-            return;
+        if (err.code === 'ENOENT') {
+            return res.json([]);
         }
 
-        // Dividimos el nombre por los guiones bajos "_"
-        // Ejemplo: OP_1234_CANO_5_2026...pdf
-        const partes = nombreArchivo.replace('.pdf', '').split('_');
+        throw err;
+    }
 
-        // Como sabemos el formato exacto, tomamos las posiciones correspondientes:
-        // partes[0] = "OP", partes[1] = "1234", partes[2] = "CANO", partes[3] = "5"
-        let op = partes.length > 1 ? partes[1] : '';
-        let cano = partes.length > 3 ? partes[3] : '';
+    const nombresPdf = archivos.filter(nombreArchivo => nombreArchivo.endsWith('.pdf'));
+    const ensayos = [];
 
-        const stats = fs.statSync(path.join(carpeta, nombreArchivo));
+    for (let i = 0; i < nombresPdf.length; i += PDFS_POR_TANDA) {
 
-        ensayos.push({
-            op: op,
-            cano: cano,
-            fecha: ensayosDatos.fechaLocal(stats.mtime),
-            archivo: nombreArchivo
-        });
-    });
+        const tanda = await Promise.all(nombresPdf.slice(i, i + PDFS_POR_TANDA).map(async nombreArchivo => {
+
+            // Dividimos el nombre por los guiones bajos "_"
+            // Ejemplo: OP_1234_CANO_5_2026...pdf
+            const partes = nombreArchivo.replace('.pdf', '').split('_');
+
+            // Como sabemos el formato exacto, tomamos las posiciones correspondientes:
+            // partes[0] = "OP", partes[1] = "1234", partes[2] = "CANO", partes[3] = "5"
+            let op = partes.length > 1 ? partes[1] : '';
+            let cano = partes.length > 3 ? partes[3] : '';
+
+            let stats;
+
+            try {
+                stats = await fs.promises.stat(path.join(carpeta, nombreArchivo));
+            } catch (err) {
+
+                // Se borró mientras se armaba la lista: no está más
+                if (err.code === 'ENOENT') {
+                    return null;
+                }
+
+                throw err;
+            }
+
+            return {
+                op: op,
+                cano: cano,
+                fecha: ensayosDatos.fechaLocal(stats.mtime),
+                archivo: nombreArchivo
+            };
+        }));
+
+        ensayos.push(...tanda.filter(Boolean));
+    }
 
     // Ordenamos del más nuevo al más viejo
     ensayos.sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -3587,7 +3689,11 @@ setInterval(() => {
 // 1. Obtener lista de máquinas únicas para los filtros de la pantalla
 app.get('/api/horometros/maquinas', requierePermiso('horometros'), (req, res) => {
     db.all(`SELECT DISTINCT maquina FROM horometros ORDER BY maquina ASC`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            // El detalle va al log, no a quien hizo el pedido
+            console.error('Error leyendo las máquinas de Horómetros:', err);
+            return res.status(500).json({ error: 'Error consultando las máquinas de horómetros.' });
+        }
         res.json(rows.map(r => r.maquina));
     });
 });
@@ -3619,7 +3725,10 @@ app.get('/api/horometros/datos', requierePermiso('horometros'), (req, res) => {
     `;
 
     db.all(sql, [...listaMaquinas, rango.desdeUtc, rango.hastaUtc], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            console.error('Error leyendo los datos de Horómetros:', err);
+            return res.status(500).json({ error: 'Error consultando los datos de horómetros.' });
+        }
 
         // "fecha" se guarda en UTC; "dia" es el día de hora local al que
         // pertenece la lectura, que es el que usa la pantalla para agrupar.
@@ -3969,9 +4078,56 @@ app.use((err, req, res, next) => {
     res.status(estado).type('text/plain').send(mensaje);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const servidorHttp = app.listen(PORT, '0.0.0.0', () => {
 
     console.log(
         `Servidor iniciado en puerto ${PORT}`
     );
 });
+
+// ======================================================
+// APAGADO ORDENADO
+// ======================================================
+// Docker (docker stop, y cada redespliegue desde Portainer) avisa con SIGTERM y
+// espera 10 s antes de matar el programa. Node, que en el contenedor es el
+// proceso 1, ignora SIGTERM si nadie lo escucha: cada redespliegue esperaba los
+// 10 s completos y cortaba de golpe lo que estuviera haciendo (un pedido a
+// medias, un backup copiándose). Ahora deja de aceptar pedidos nuevos, espera
+// a que terminen los que están en curso y el backup que esté saliendo, y sale.
+// El ensayo en curso no necesita nada más: su avance se guarda en cada muestra
+// y se rescata solo al arrancar.
+
+const ESPERA_MAXIMA_APAGADO_MS = 8000;
+
+let apagando = false;
+
+function apagarOrdenadamente(senal) {
+
+    // Una segunda señal (por ejemplo otro Ctrl+C) corta ya mismo
+    if (apagando) {
+        process.exit(1);
+    }
+
+    apagando = true;
+
+    console.log(`Llegó ${senal}: el servidor se apaga. Se terminan los pedidos en curso y el backup que esté saliendo.`);
+
+    // Si algo no termina, se corta antes de que Docker lo haga a la fuerza
+    setTimeout(() => {
+        console.warn(`El apagado ordenado no terminó en ${ESPERA_MAXIMA_APAGADO_MS / 1000} s: se corta.`);
+        process.exit(1);
+    }, ESPERA_MAXIMA_APAGADO_MS).unref();
+
+    const pedidosEnCurso = new Promise(resolver => servidorHttp.close(resolver));
+
+    // Las conexiones ociosas (keep-alive del navegador) se cierran ya, así no demoran el apagado
+    servidorHttp.closeIdleConnections();
+
+    Promise.all([pedidosEnCurso, colaBackups]).then(() => {
+        console.log('Servidor apagado.');
+        process.exit(0);
+    });
+}
+
+process.on('SIGTERM', () => apagarOrdenadamente('SIGTERM'));
+process.on('SIGINT', () => apagarOrdenadamente('SIGINT'));
