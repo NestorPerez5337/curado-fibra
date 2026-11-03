@@ -22,6 +22,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.set('trust proxy', 1);
 
+// No avisar con qué está hecho el servidor en cada respuesta ("X-Powered-By: Express").
+app.disable('x-powered-by');
+
 // ======================================================
 // ESTADO DEL SISTEMA: MEDICIÓN
 // ======================================================
@@ -3905,6 +3908,65 @@ require('./estado/rutas')(app, {
     listarArranquesSql: monitorAlmacen.listarArranquesSql,
     destinoSql: destinoSqlServer,
     estadoEnsayo: estadoEnsayoParaSemaforo
+});
+
+// ======================================================
+// PEDIDOS QUE FALLAN: QUÉ SE LE CONTESTA A QUIEN LOS HIZO
+// ======================================================
+// Va después de todas las rutas. Sin esto Express arma una página con el
+// stack completo del error (rutas internas del servidor, versiones de las
+// librerías) y se la manda a cualquiera: no hace falta haber iniciado sesión,
+// alcanza con mandarle un JSON roto a /api/login. Acá el detalle queda solo
+// en el log y quien hizo el pedido recibe un mensaje corto.
+
+const MENSAJES_ERROR_HTTP = {
+    400: 'El pedido llegó mal armado.',
+    404: 'No se encontró lo que se pidió.',
+    413: 'El pedido es demasiado grande.',
+    415: 'El tipo de datos del pedido no está admitido.'
+};
+
+// Los errores de Express y de las librerías traen su código HTTP en status / statusCode
+// (JSON roto: 400, cuerpo enorme: 413...). Un error sin código, o con uno que no
+// sea de error, es un fallo del programa: 500.
+function estadoHttpDeError(err) {
+    const estado = Number(err && (err.status || err.statusCode));
+
+    return Number.isInteger(estado) && estado >= 400 && estado <= 599 ? estado : 500;
+}
+
+function mensajeDeErrorHttp(estado) {
+    if (MENSAJES_ERROR_HTTP[estado]) {
+        return MENSAJES_ERROR_HTTP[estado];
+    }
+
+    return estado >= 500
+        ? 'Error interno del servidor. Probá de nuevo y, si se repite, avisá a soporte.'
+        : 'No se pudo procesar el pedido.';
+}
+
+app.use((err, req, res, next) => {
+
+    // Ya se empezó a responder: no se puede cambiar la respuesta; Express corta la conexión.
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    const estado = estadoHttpDeError(err);
+
+    // Solo los fallos del programa van al log (y al panel de Estado). Los pedidos mal armados
+    // (4xx) son culpa de quien los manda y cualquiera puede generarlos: no deben llenar la lista.
+    if (estado >= 500) {
+        console.error(`Error no controlado en ${req.method} ${req.path}:`, err);
+    }
+
+    const mensaje = mensajeDeErrorHttp(estado);
+
+    if (req.path.startsWith('/api/')) {
+        return res.status(estado).json({ error: mensaje });
+    }
+
+    res.status(estado).type('text/plain').send(mensaje);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
