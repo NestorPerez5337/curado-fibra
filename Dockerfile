@@ -27,5 +27,10 @@ COPY . .
 # 6. Exponemos el puerto de comunicación
 EXPOSE 3000
 
-# 7. Comando de arranque
+# 7. Estado de salud: cada 30 s se pide /health; sin respuesta 3 veces seguidas
+# Docker (y Portainer) marcan el contenedor como "unhealthy". Los primeros 60 s
+# (arranque, creación de tablas, administrador inicial) no cuentan como fallo.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+
+# 8. Comando de arranque
 CMD ["node", "server.js"]
