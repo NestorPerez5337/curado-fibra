@@ -37,6 +37,8 @@ function ahoraTexto() {
 
 const limpio = v => String(v || '').replace(/[^A-Za-z0-9-]+/g, '-');
 
+const textoLegajo = e => e.legajo === null ? '—' : String(e.legajo);
+
 // ensayos: el primero es el principal; si hay más, es una comparación.
 function nombreArchivoPdf(ensayos) {
     const ensayo = ensayos[0];
@@ -84,8 +86,19 @@ async function generarPdfEnsayo(ensayos, usuario) {
 
     doc.moveTo(izq, 62).lineTo(izq + ancho, 62).lineWidth(1).strokeColor('#0077b6').stroke();
 
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
-        .text(ensayo.producto || '', izq, 72, { width: ancho });
+    // Producto a la izquierda y legajo a la derecha, en la misma línea: si el
+    // producto no entra, se corta con "…" para no pisar el legajo. En una
+    // comparación va por fila, porque cada ensayo puede tener otro operador.
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+
+    if (ensayo.tieneLegajo && !comparar) {
+        const legajo = `Legajo operador: ${textoLegajo(ensayo)}`;
+        const anchoLegajo = doc.widthOfString(legajo);
+        doc.text(ensayo.producto || '', izq, 72, { width: ancho - anchoLegajo - 16, height: 14, ellipsis: true });
+        doc.text(legajo, izq + ancho - anchoLegajo, 72, { width: anchoLegajo, lineBreak: false });
+    } else {
+        doc.text(ensayo.producto || '', izq, 72, { width: ancho });
+    }
 
     // Tarjetas de datos, en filas de 4
     const datos = comparar ? [
@@ -124,7 +137,10 @@ async function generarPdfEnsayo(ensayos, usuario) {
     if (comparar) {
 
         const colores = GraficoPH.TEMAS.claro.curvas;
-        const columnas = [
+        const columnas = ensayo.tieneLegajo ? [
+            ['Ensayo', 0.16], ['Fecha', 0.11], ['Inicio – Fin', 0.19], ['Duración', 0.10],
+            ['Pico alcanzado', 0.18], ['Tiempo sobre mínima', 0.15], ['Legajo', 0.11]
+        ] : [
             ['Ensayo', 0.16], ['Fecha', 0.12], ['Inicio – Fin', 0.20],
             ['Duración', 0.14], ['Pico alcanzado', 0.20], ['Tiempo sobre mínima', 0.18]
         ];
@@ -154,7 +170,8 @@ async function generarPdfEnsayo(ensayos, usuario) {
                 re ? `${re.inicio.slice(11, 19)} – ${re.fin.slice(11, 19)}` : '—',
                 re ? mmss(re.duracionSeg) : '—',
                 re ? `${num(re.pico.p)} ${u}  (${re.pico.t.slice(11, 19)})` : '—',
-                re && re.segSobreMin !== null ? mmss(re.segSobreMin) : '—'
+                re && re.segSobreMin !== null ? mmss(re.segSobreMin) : '—',
+                ...(ensayo.tieneLegajo ? [textoLegajo(e)] : [])
             ], false);
             doc.moveTo(izq, y).lineTo(izq + ancho, y).lineWidth(0.5).strokeColor('#e4e4e4').stroke();
         });

@@ -254,6 +254,7 @@ function pintarTarjetas(e) {
     ['Pico alcanzado', r ? [`${p(r.pico.p)} ${u}`, r.pico.t.slice(11, 19)] : '—'],
     ['Tiempo ≥ mínima', r && r.segSobreMin !== null ? GraficoPH.mmss(r.segSobreMin) : '—'],
   ];
+  if (e.tieneLegajo) t.push(['Legajo operador', e.legajo === null ? '—' : e.legajo]);
   $('tarjetas').innerHTML = '';
   t.forEach(([k, v]) => {
     const d = document.createElement('div'); d.className = 'tarjeta';
