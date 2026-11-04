@@ -108,6 +108,7 @@ async function obtenerEnsayo(maquina, id) {
         .query(`
             SELECT Id AS id, NumeroOP AS op, NumeroCano AS cano,
                    ${maquina.tieneCano2 ? 'NumeroCano2' : 'NULL'} AS cano2,
+                   ${maquina.tieneLegajo ? 'Legajo' : 'NULL'} AS legajo,
                    CodigoProducto AS producto, PresionMin AS min, PresionMax AS max,
                    UnidadPresion AS unidad, ${FECHA('FechaEnsayo')} AS fechaEnsayo
             FROM ${maquina.maestro}
@@ -129,6 +130,7 @@ async function obtenerEnsayo(maquina, id) {
     return {
         ...m,
         maquina: maquina.nombre,
+        tieneLegajo: maquina.tieneLegajo,
         cano2: normalizarCano2(m.cano2),
         min,
         max,

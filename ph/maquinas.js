@@ -16,11 +16,12 @@
 // lista y nunca escribe un nombre de tabla.
 //
 // Para sumar una máquina nueva alcanza con agregar su línea. Si no tiene
-// la columna NumeroCano2, poner tieneCano2: false.
+// la columna NumeroCano2, poner tieneCano2: false. Si tiene la columna
+// Legajo (operador que hizo el ensayo), poner tieneLegajo: true.
 
 const MAQUINAS = {
-    ph9: { nombre: 'PH9', maestro: 'ph9_maestro', detalle: 'ph9_detalle', tieneCano2: true },
-    phcorta: { nombre: 'PH Corta', maestro: 'PHCorta_Maestro', detalle: 'PHCorta_Detalle', tieneCano2: false },
+    ph9: { nombre: 'PH9', maestro: 'ph9_maestro', detalle: 'ph9_detalle', tieneCano2: true, tieneLegajo: false },
+    phcorta: { nombre: 'PH Corta', maestro: 'PHCorta_Maestro', detalle: 'PHCorta_Detalle', tieneCano2: false, tieneLegajo: true },
 };
 
 function obtenerMaquina(clave) {
