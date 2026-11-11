@@ -195,8 +195,19 @@ async function cargarMaquinas(inicial) {
 }
 
 async function cargarOps() {
+  estado.ops = await api(`/api/ph/${estado.maquina}/ops`);
+  sugerirOps('');
+}
+
+// La lista de sugerencias muestra pocas OP para que no sea eterna: con el
+// campo vacío, las últimas (vienen de la más reciente a la más vieja); al
+// escribir, las que contienen lo escrito, entre todas las de la máquina.
+const MAX_SUGERENCIAS_OP = 10;
+
+function sugerirOps(texto) {
+  const buscado = texto.trim();
+  const ops = (estado.ops || []).filter(o => o.op.includes(buscado)).slice(0, MAX_SUGERENCIAS_OP);
   $('listaOps').innerHTML = '';
-  const ops = await api(`/api/ph/${estado.maquina}/ops`);
   ops.forEach(o => $('listaOps').appendChild(opcion(o.op, `${o.ensayos} ensayos · último ${diaMesHora(o.ultimo)}`)));
 }
 
@@ -546,6 +557,8 @@ $('maquina').addEventListener('change', conAviso(async () => {
 }));
 $('op').addEventListener('change', conAviso(() => cargarCanos()));
 $('op').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+// Los dos campos de OP comparten la lista: se arma con lo escrito en el que se está usando.
+['op', 'mOp'].forEach(id => ['input', 'focus'].forEach(ev => $(id).addEventListener(ev, e => sugerirOps(e.target.value))));
 $('cano').addEventListener('change', conAviso(() => cargarEnsayos()));
 $('ensayo').addEventListener('change', conAviso(mostrar));
 $('comparar').addEventListener('change', conAviso(mostrar));
