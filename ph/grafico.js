@@ -57,11 +57,11 @@
         return t.slice(8, 10) + '/' + t.slice(5, 7);
     }
 
-    // PSI sin decimales (miles de PSI); MPa, bar, etc. con un decimal
-    // (la PH Corta trabaja con 14,5 / 16,5 MPa).
+    // PSI y kg/cm² sin decimales (miles y cientos); MPa, bar, etc. con un
+    // decimal (la PH Corta trabaja con 14,5 / 16,5 MPa).
     function presion(v, unidad) {
         if (v === null || v === undefined) return '—';
-        const decimales = /^psi$/i.test(unidad || 'PSI') ? 0 : 1;
+        const decimales = /^(psi|kg\/cm²)$/i.test(unidad || 'PSI') ? 0 : 1;
         return Number(v).toFixed(decimales).replace('.', ',');
     }
 
@@ -137,10 +137,13 @@
 
         const techo = Math.max(max || 0, ...ensayos.map(e => e.resumen ? e.resumen.pico.p : 0));
 
-        // Mín y Máx muy juntas (ej. 14,5 / 16,5 MPa sobre un eje de 25):
-        // la etiqueta de Máx va a la derecha para que no se pisen.
+        // Mín y Máx muy juntas (ej. 460 / 480 kg/cm² sobre un eje de 600):
+        // las dos etiquetas quedan a la izquierda, donde la curva todavía está
+        // abajo, la de Máx sobre su línea y la de Mín debajo de la suya. A la
+        // derecha las tapaba el pico, que en los ensayos cortos cae al final.
         if (anotaciones.max && anotaciones.min && techo && (max - min) / techo < 0.12) {
-            anotaciones.max.label.position = 'end';
+            anotaciones.max.label.yAdjust = -12 * f;
+            anotaciones.min.label.yAdjust = 12 * f;
         }
 
         const r = principal.resumen;

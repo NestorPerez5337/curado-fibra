@@ -22,6 +22,8 @@
 const MAQUINAS = {
     ph9: { nombre: 'PH9', maestro: 'ph9_maestro', detalle: 'ph9_detalle', tieneCano2: true, tieneLegajo: false },
     phcorta: { nombre: 'PH Corta', maestro: 'PHCorta_Maestro', detalle: 'PHCorta_Detalle', tieneCano2: false, tieneLegajo: true },
+    // Tiene la columna Legajo, pero Node-RED todavía no la graba.
+    phext: { nombre: 'PH de Extremos', maestro: 'PHExt_Maestro', detalle: 'PHExt_Detalle', tieneCano2: false, tieneLegajo: false },
 };
 
 function obtenerMaquina(clave) {
