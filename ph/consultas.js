@@ -22,9 +22,9 @@ function normalizarCano2(valor) {
     return v && v !== '0' ? v : null;
 }
 
-// Node-RED graba la unidad como venga del PLC ("Mpa", "psi"...): se muestra
-// siempre igual. Si no hay unidad, PSI.
-const UNIDADES = { psi: 'PSI', mpa: 'MPa', kpa: 'kPa', bar: 'bar' };
+// Node-RED graba la unidad como venga del PLC ("Mpa", "psi", "Kg/cm2"...): se
+// muestra siempre igual. Si no hay unidad, PSI.
+const UNIDADES = { psi: 'PSI', mpa: 'MPa', kpa: 'kPa', bar: 'bar', 'kg/cm2': 'kg/cm²' };
 function normalizarUnidad(valor) {
     const v = (valor || '').trim();
     return UNIDADES[v.toLowerCase()] || v || 'PSI';
